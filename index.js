@@ -1,25 +1,45 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+const qrcode = require('qrcode'); // مكتبة تحويل الكود لصورة
 const { OpenAI } = require('openai');
 const axios = require('axios');
 const express = require('express');
 
 const app = express();
 
-// 1. استدعاء المتغيرات من إعدادات Render
+// متغير لتخزين صورة الباركود
+let qrCodeImage = null;
+let isConnected = false;
+
+// 1. استدعاء المتغيرات
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SHEET_SCRIPT_URL = process.env.SHEET_SCRIPT_URL;
 
-// التحقق من المتغيرات
 if (!OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
-    console.error("❌ ERROR: Missing Environment Variables! Check Render Settings.");
+    console.error("❌ ERROR: Missing Keys in Render!");
     process.exit(1);
 }
 
-// 2. سيرفر لإبقاء البوت حياً
+// 2. إعداد صفحة الويب لعرض الباركود
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Bot is Running 🤖'));
-app.listen(PORT, () => console.log(`🌍 Server port: ${PORT}`));
+
+app.get('/', (req, res) => {
+    if (isConnected) {
+        res.send('<h1>✅ البوت متصل ويعمل بنجاح!</h1>');
+    } else if (qrCodeImage) {
+        // عرض الصورة في وسط الشاشة
+        res.send(`
+            <div style="text-align:center; padding-top:50px;">
+                <h1>امسح الكود لربط الواتساب</h1>
+                <img src="${qrCodeImage}" alt="QR Code" style="width:300px; border:2px solid #333;"/>
+                <p>تحديث الصفحة إذا لم يظهر الكود</p>
+            </div>
+        `);
+    } else {
+        res.send('<h1>⏳ جاري تشغيل البوت... انتظر دقيقة وحدث الصفحة.</h1>');
+    }
+});
+
+app.listen(PORT, () => console.log(`🌍 Server running on port ${PORT}`));
 
 // 3. إعداد OpenAI
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -33,14 +53,21 @@ const client = new Client({
     }
 });
 
+// عند إنشاء كود الربط، نحوله لصورة
 client.on('qr', (qr) => {
-    console.log('\n=================================================');
-    console.log('⚠️  SCAN THIS QR CODE:');
-    qrcode.generate(qr, { small: true });
-    console.log('=================================================\n');
+    console.log('QR Generated');
+    qrcode.toDataURL(qr, (err, url) => {
+        if (!err) {
+            qrCodeImage = url; // حفظ الصورة لعرضها في المتصفح
+        }
+    });
 });
 
-client.on('ready', () => console.log('✅ WhatsApp Ready!'));
+client.on('ready', () => {
+    console.log('✅ WhatsApp Ready!');
+    isConnected = true;
+    qrCodeImage = null; // إخفاء الكود بعد الربط
+});
 
 // 5. معالجة الرسائل
 client.on('message', async msg => {
@@ -48,7 +75,6 @@ client.on('message', async msg => {
     const triggers = ['سجل', 'اشتريت', 'شريت', 'صرفت', 'دفعت'];
     
     if (triggers.some(t => text.startsWith(t))) {
-        console.log(`📩 Processing: ${text}`);
         try {
             const gptResponse = await openai.chat.completions.create({
                 messages: [
