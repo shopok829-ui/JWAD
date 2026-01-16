@@ -3,69 +3,119 @@ const qrcode = require('qrcode-terminal');
 const { OpenAI } = require('openai');
 const axios = require('axios');
 const express = require('express');
+
+// إنشاء تطبيق Express لإبقاء السيرفر حياً
 const app = express();
 
-// --- إعداداتك ---
-const OPENAI_API_KEY = 'YOUR_OPENAI_API_KEY_HERE'; // ضع مفتاح OpenAI
-const SHEET_SCRIPT_URL = 'YOUR_GOOGLE_SCRIPT_URL_HERE'; // ضع رابط Apps Script الذي نسخته
+// ------------------------------------------------------------------
+// 1. استدعاء المتغيرات من إعدادات السيرفر (Render Environment Variables)
+// ------------------------------------------------------------------
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const SHEET_SCRIPT_URL = process.env.SHEET_SCRIPT_URL;
 
-// إعداد OpenAI
+// التحقق من وجود المتغيرات (للتنبيه في Logs السيرفر إذا نسيتها)
+if (!OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
+    console.error("❌ ERROR: Missing Environment Variables! Please add OPENAI_API_KEY and SHEET_SCRIPT_URL in Render settings.");
+    process.exit(1);
+}
+
+// ------------------------------------------------------------------
+// 2. تشغيل سيرفر وهمي (Keep-Alive Server)
+// ------------------------------------------------------------------
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('WhatsApp Expense Bot is Running Securely! 🔒🤖');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌍 Server is listening on port ${PORT}`);
+});
+
+// ------------------------------------------------------------------
+// 3. إعداد OpenAI و WhatsApp
+// ------------------------------------------------------------------
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// 1. إعداد سيرفر وهمي لإبقاء البوت مستيقظاً في Render
-const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => {
-    res.send('Bot is running and awake! 🤖');
-});
-app.listen(PORT, () => {
-    console.log(`Server is listening on port ${PORT}`);
-});
-
-// 2. إعداد الواتساب
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: '/opt/render/project/src/.wwebjs_auth' }),
+    authStrategy: new LocalAuth({ dataPath: './auth_session' }), 
     puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        // هذا السطر مهم جداً ليعمل على Render باستخدام Docker
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--disable-gpu'
+        ],
     }
 });
 
+// ------------------------------------------------------------------
+// 4. أحداث البوت
+// ------------------------------------------------------------------
+
 client.on('qr', (qr) => {
-    // في Render سنطبع الكود في الـ Logs
-    console.log('QR Code generated. Please scan it from the logs.');
+    console.log('\n=================================================');
+    console.log('⚠️  يرجى مسح الكود أدناه لربط الواتساب:');
     qrcode.generate(qr, { small: true });
+    console.log('=================================================\n');
 });
 
 client.on('ready', () => {
-    console.log('✅ Whatsapp Bot is Ready!');
+    console.log('✅ البوت جاهز ومتصل بالواتساب بنجاح!');
 });
 
+// ------------------------------------------------------------------
+// 5. معالجة الرسائل
+// ------------------------------------------------------------------
 client.on('message', async msg => {
     const text = msg.body;
-    // الكلمات المفتاحية
-    if (text.startsWith('سجل') || text.startsWith('شتريت') || text.startsWith('شريت')) {
-        
+    
+    // كلمات الاستدعاء
+    const triggers = ['سجل', 'اشتريت', 'شريت', 'صرفت', 'دفعت', 'تم شراء'];
+    const startsWithTrigger = triggers.some(t => text.startsWith(t));
+
+    if (startsWithTrigger) {
+        console.log(`📩 معالجة رسالة: ${text}`);
+
         try {
-            // تحليل عبر OpenAI
+            // أ) تحليل النص باستخدام GPT
             const completion = await openai.chat.completions.create({
                 messages: [
-                    { role: "system", content: "You are a JSON extractor. Output valid JSON only." },
-                    { role: "user", content: `Extract (item, amount, category) from: "${text}". If amount is missing put 0. JSON format: {"item":"..","amount":0,"category":".."}` }
+                    { 
+                        role: "system", 
+                        content: `You are an expense tracker assistant. Extract data from Arabic text into JSON. 
+                        Keys: "item" (string), "amount" (number), "category" (string).
+                        Categories: Food, Transport, Bills, Shopping, Work, Other.
+                        If currency is missing, assume SAR. Return JSON ONLY inside curly braces.` 
+                    },
+                    { role: "user", content: `Extract from: "${text}"` }
                 ],
                 model: "gpt-3.5-turbo",
+                temperature: 0.3
             });
 
-            const jsonStr = completion.choices[0].message.content;
-            const data = JSON.parse(jsonStr);
-            data.raw_text = text;
+            // تنظيف النص من أي زيادات (Markdown)
+            let gptContent = completion.choices[0].message.content;
+            gptContent = gptContent.replace(/```json/g, '').replace(/```/g, '').trim();
+            
+            const expenseData = JSON.parse(gptContent);
+            expenseData.raw_text = text;
 
-            // إرسال البيانات لرابط قوقل شيت
-            await axios.post(SHEET_SCRIPT_URL, data);
+            // ب) إرسال البيانات إلى Google Sheet
+            await axios.post(SHEET_SCRIPT_URL, expenseData);
 
-            msg.reply(`✅ تم الحفظ: ${data.item} (${data.amount})`);
+            // ج) الرد
+            await msg.reply(`✅ *تم التسجيل:*\n📦 البند: ${expenseData.item}\n💰 المبلغ: ${expenseData.amount}\n📂 التصنيف: ${expenseData.category}`);
+            console.log("✅ Data saved successfully.");
 
         } catch (error) {
-            console.error(error);
-            msg.reply('❌ حدث خطأ، تأكد من الصيغة.');
+            console.error("❌ Error processing message:", error);
+            // msg.reply('❌ حدث خطأ، حاول مرة أخرى.');
         }
     }
 });
