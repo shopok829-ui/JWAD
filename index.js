@@ -17,27 +17,12 @@ if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
 }
 
 // =================================================================
-// 🎨 نظام الداش بورد (Dashboard System)
+// 🎨 نظام الداش بورد المطور (Advanced Dashboard)
 // =================================================================
 
-// دالة لتوليد كود HTML للداش بورد
 const getDashboardHTML = (records) => {
-    // حساب الإحصائيات للجافاسكربت
-    const categories = {};
-    let totalSpent = 0;
-
-    records.forEach(r => {
-        if (!r.amount) return;
-        totalSpent += r.amount;
-        if (categories[r.category]) {
-            categories[r.category] += r.amount;
-        } else {
-            categories[r.category] = r.amount;
-        }
-    });
-
-    const categoryLabels = Object.keys(categories);
-    const categoryData = Object.values(categories);
+    // نمرر البيانات الخام إلى المتصفح ليتعامل معها الجافاسكربت بمرونة
+    const safeRecords = JSON.stringify(records).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
     return `
     <!DOCTYPE html>
@@ -45,78 +30,229 @@ const getDashboardHTML = (records) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>لوحة تحكم مصاريف جواد</title>
+        <title>محفظة جواد 📊</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
+        
         <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; color: #333; margin: 0; padding: 20px; }
-            .container { max-width: 800px; margin: 0 auto; }
-            .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; text-align: center; }
-            h1 { color: #2c3e50; }
-            .total-box { font-size: 2.5em; color: #27ae60; font-weight: bold; }
-            .chart-container { position: relative; height: 300px; width: 100%; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { padding: 10px; border-bottom: 1px solid #ddd; text-align: right; }
-            th { background-color: #f8f9fa; }
+            body { font-family: 'Tajawal', sans-serif; background-color: #f0f2f5; }
+            .card { border: none; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); transition: transform 0.2s; }
+            .card:hover { transform: translateY(-5px); }
+            .metric-value { font-size: 2rem; font-weight: bold; color: #2c3e50; }
+            .metric-label { color: #7f8c8d; font-size: 0.9rem; }
+            .chart-box { height: 300px; position: relative; }
+            .header-gradient { background: linear-gradient(135deg, #0d6efd, #0dcaf0); color: white; padding: 2rem 0; margin-bottom: 2rem; border-radius: 0 0 20px 20px; }
+            .filter-btn { margin: 0 5px; border-radius: 20px; padding: 5px 20px; }
+            .filter-btn.active { background-color: #0d6efd; color: white; }
+            table thead { background-color: #f8f9fa; }
         </style>
     </head>
     <body>
-        <div class="container">
-            <h1>📊 لوحة تحكم المصاريف</h1>
-            
-            <div class="card">
-                <h3>إجمالي المصروفات</h3>
-                <div class="total-box">${totalSpent.toLocaleString()} ريال</div>
-            </div>
 
-            <div class="card">
-                <h3>توزيع المصاريف حسب الفئة</h3>
-                <div class="chart-container">
-                    <canvas id="categoryChart"></canvas>
+        <div class="header-gradient text-center">
+            <div class="container">
+                <h1>📊 لوحة التحكم المالية</h1>
+                <p class="opacity-75">متابعة دقيقة لمصاريفك الشخصية</p>
+                <div class="mt-3">
+                    <button onclick="filterData('all')" class="btn btn-light filter-btn active" id="btn-all">الكل</button>
+                    <button onclick="filterData('month')" class="btn btn-light filter-btn" id="btn-month">هذا الشهر</button>
+                    <button onclick="filterData('week')" class="btn btn-light filter-btn" id="btn-week">آخر 7 أيام</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="container mb-5">
+            <div class="row g-4 mb-4">
+                <div class="col-md-4">
+                    <div class="card p-3 text-center">
+                        <div class="metric-label">إجمالي المصروفات</div>
+                        <div class="metric-value text-primary" id="totalDisplay">0 ر.س</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-3 text-center">
+                        <div class="metric-label">عدد العمليات</div>
+                        <div class="metric-value text-success" id="countDisplay">0</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-3 text-center">
+                        <div class="metric-label">المتوسط للعملية</div>
+                        <div class="metric-value text-warning" id="avgDisplay">0 ر.س</div>
+                    </div>
                 </div>
             </div>
 
-            <div class="card">
-                <h3>آخر 5 عمليات</h3>
-                <table>
-                    <thead><tr><th>البند</th><th>المبلغ</th><th>التاريخ</th></tr></thead>
-                    <tbody>
-                        ${records.slice(-5).reverse().map(r => `<tr><td>${r.item}</td><td>${r.amount}</td><td>${r.date}</td></tr>`).join('')}
-                    </tbody>
-                </table>
+            <div class="row g-4 mb-4">
+                <div class="col-md-6">
+                    <div class="card p-3">
+                        <h5 class="card-title mb-3">توزيع المصاريف (الفئات)</h5>
+                        <div class="chart-box">
+                            <canvas id="categoryChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card p-3">
+                        <h5 class="card-title mb-3">تطور الصرف (يومياً)</h5>
+                        <div class="chart-box">
+                            <canvas id="trendChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card p-4">
+                <h5 class="card-title mb-3">📝 آخر العمليات المسجلة</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>التاريخ</th>
+                                <th>البند</th>
+                                <th>التصنيف</th>
+                                <th>المبلغ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="transactionsTable">
+                            </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
         <script>
-            const ctx = document.getElementById('categoryChart').getContext('2d');
-            new Chart(ctx, {
-                type: 'doughnut',
-                data: {
-                    labels: ${JSON.stringify(categoryLabels)},
-                    datasets: [{
-                        data: ${JSON.stringify(categoryData)},
-                        backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40'],
-                        borderWidth: 1
-                    }]
-                },
-                options: { responsive: true, maintainAspectRatio: false }
+            // استلام البيانات من السيرفر
+            const rawData = JSON.parse("${safeRecords}");
+            let categoryChartInstance = null;
+            let trendChartInstance = null;
+
+            // تحويل التواريخ لتنسيق قابل للمقارنة
+            const processedData = rawData.map(item => {
+                // تحويل التاريخ من DD/MM/YYYY إلى كائن Date
+                const parts = item.date.split('/');
+                const dateObj = new Date(parts[2], parts[1] - 1, parts[0]);
+                return { ...item, dateObj: dateObj };
             });
+
+            function filterData(type) {
+                // تحديث شكل الأزرار
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active', 'btn-primary'));
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.add('btn-light'));
+                const activeBtn = document.getElementById('btn-' + type);
+                activeBtn.classList.remove('btn-light');
+                activeBtn.classList.add('active', 'btn-primary');
+
+                const now = new Date();
+                let filtered = [];
+
+                if (type === 'all') {
+                    filtered = processedData;
+                } else if (type === 'month') {
+                    filtered = processedData.filter(d => 
+                        d.dateObj.getMonth() === now.getMonth() && 
+                        d.dateObj.getFullYear() === now.getFullYear()
+                    );
+                } else if (type === 'week') {
+                    const lastWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+                    filtered = processedData.filter(d => d.dateObj >= lastWeek);
+                }
+
+                updateDashboard(filtered);
+            }
+
+            function updateDashboard(data) {
+                // 1. تحديث الأرقام
+                const total = data.reduce((sum, item) => sum + (item.amount || 0), 0);
+                const count = data.length;
+                const avg = count > 0 ? (total / count).toFixed(1) : 0;
+
+                document.getElementById('totalDisplay').innerText = total.toLocaleString() + ' ر.س';
+                document.getElementById('countDisplay').innerText = count;
+                document.getElementById('avgDisplay').innerText = avg + ' ر.س';
+
+                // 2. تحديث الجدول (آخر 10 عمليات)
+                const tableBody = document.getElementById('transactionsTable');
+                tableBody.innerHTML = data.slice(-10).reverse().map(item => \`
+                    <tr>
+                        <td>\${item.date} <small class="text-muted">\${item.time}</small></td>
+                        <td class="fw-bold">\${item.item}</td>
+                        <td><span class="badge bg-secondary">\${item.category}</span></td>
+                        <td class="text-danger fw-bold">-\${item.amount}</td>
+                    </tr>
+                \`).join('');
+
+                // 3. تحديث الرسم البياني (الفئات)
+                const categories = {};
+                data.forEach(item => {
+                    categories[item.category] = (categories[item.category] || 0) + item.amount;
+                });
+
+                if (categoryChartInstance) categoryChartInstance.destroy();
+                const ctxCat = document.getElementById('categoryChart').getContext('2d');
+                categoryChartInstance = new Chart(ctxCat, {
+                    type: 'doughnut',
+                    data: {
+                        labels: Object.keys(categories),
+                        datasets: [{
+                            data: Object.values(categories),
+                            backgroundColor: ['#3498db', '#e74c3c', '#f1c40f', '#2ecc71', '#9b59b6', '#34495e'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: { maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+                });
+
+                // 4. تحديث الرسم البياني (التطور الزمني)
+                const dailySpending = {};
+                data.forEach(item => {
+                    // تجميع حسب التاريخ
+                    const dateKey = item.date; // DD/MM/YYYY
+                    dailySpending[dateKey] = (dailySpending[dateKey] || 0) + item.amount;
+                });
+                
+                // ترتيب التواريخ
+                const sortedDates = Object.keys(dailySpending).sort((a, b) => {
+                    const da = a.split('/'); const db = b.split('/');
+                    return new Date(da[2], da[1]-1, da[0]) - new Date(db[2], db[1]-1, db[0]);
+                });
+
+                if (trendChartInstance) trendChartInstance.destroy();
+                const ctxTrend = document.getElementById('trendChart').getContext('2d');
+                trendChartInstance = new Chart(ctxTrend, {
+                    type: 'line',
+                    data: {
+                        labels: sortedDates,
+                        datasets: [{
+                            label: 'المصروف اليومي',
+                            data: sortedDates.map(d => dailySpending[d]),
+                            borderColor: '#0d6efd',
+                            tension: 0.4,
+                            fill: true,
+                            backgroundColor: 'rgba(13, 110, 253, 0.1)'
+                        }]
+                    },
+                    options: { maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+                });
+            }
+
+            // التشغيل الأولي
+            filterData('all');
         </script>
     </body>
     </html>
     `;
 };
 
-// الراوت الرئيسي: يعرض الداش بورد
+// الراوت الرئيسي
 app.get('/', async (req, res) => {
     try {
-        // جلب البيانات من الشيت
         const response = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
         const records = response.data.records || [];
-        
-        // إرسال صفحة الويب
         res.send(getDashboardHTML(records));
     } catch (error) {
-        res.send(`<h1>حدث خطأ أثناء جلب البيانات: ${error.message}</h1>`);
+        res.send(`<h1>حدث خطأ: ${error.message}</h1>`);
     }
 });
 
@@ -124,7 +260,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
 
 // =================================================================
-// 🤖 كود البوت (AI Accountant)
+// 🤖 كود البوت (نفس المنطق السابق)
 // =================================================================
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -140,7 +276,6 @@ bot.on('message', async (msg) => {
     bot.sendChatAction(chatId, 'typing');
 
     try {
-        // 1. تصنيف النية
         const intentCheck = await openai.chat.completions.create({
             messages: [
                 { role: "system", content: `Classify intent: {"type": "write"} for recording expenses, {"type": "read"} for questions/analysis. Return JSON.` },
@@ -151,7 +286,6 @@ bot.on('message', async (msg) => {
 
         const intent = JSON.parse(intentCheck.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim()).type;
 
-        // 2. التنفيذ
         if (intent === "write") {
             const extraction = await openai.chat.completions.create({
                 messages: [
@@ -168,11 +302,8 @@ bot.on('message', async (msg) => {
             bot.sendMessage(chatId, `✅ *تم التسجيل:* ${data.item} (${data.amount} ريال)`, { parse_mode: 'Markdown' });
 
         } else {
-            // جلب البيانات للتحليل (نفس البيانات المستخدمة في الداش بورد)
             const sheetResponse = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
             const records = sheetResponse.data.records || [];
-            
-            // تحويل البيانات لنص بسيط ليفهمه GPT
             const recordsText = records.map(r => `[${r.date}, ${r.item}, ${r.amount}, ${r.category}]`).join("\n");
 
             const analysis = await openai.chat.completions.create({
