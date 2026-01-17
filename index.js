@@ -5,75 +5,117 @@ const express = require('express');
 
 const app = express();
 
-// 1. استدعاء المتغيرات من Render
+// المتغيرات
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SHEET_SCRIPT_URL = process.env.SHEET_SCRIPT_URL;
-const ALLOWED_USER_ID = process.env.ALLOWED_USER_ID; 
+const ALLOWED_USER_ID = process.env.ALLOWED_USER_ID;
 
-// التحقق من المتغيرات
 if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
-    console.error("❌ Error: Missing Environment Variables in Render!");
+    console.error("❌ Error: Missing Variables!");
     process.exit(1);
 }
 
-// 2. سيرفر لإبقاء البوت مستيقظاً
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Telegram Bot is Active 🚀'));
-app.listen(PORT, () => console.log(`🌍 Server running on port ${PORT}`));
+app.get('/', (req, res) => res.send('Smart Bot is Active 🧠'));
+app.listen(PORT, () => console.log(`🌍 Port: ${PORT}`));
 
-// 3. إعداد البوت والذكاء الاصطناعي
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-console.log('✅ Telegram Bot is up and running...');
+console.log('✅ Smart Bot Ready');
 
-// 4. معالجة الرسائل
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     const userId = msg.from.id.toString();
 
-    // حماية: تأكد أن المرسل هو جواد فقط
-    if (ALLOWED_USER_ID && userId !== ALLOWED_USER_ID) {
-        // يمكنك تفعيل السطر التالي إذا أردت تنبيه الغرباء
-        // bot.sendMessage(chatId, "⛔ هذا البوت خاص.");
-        return; 
-    }
+    if (ALLOWED_USER_ID && userId !== ALLOWED_USER_ID) return;
 
-    if (text) {
-        // إظهار "جاري الكتابة..."
-        bot.sendChatAction(chatId, 'typing');
+    if (!text) return;
 
-        try {
-            // تحليل النص بـ GPT
-            const gptResponse = await openai.chat.completions.create({
+    bot.sendChatAction(chatId, 'typing');
+
+    try {
+        // 🧠 الخطوة 1: فهم النية (Intent Classification)
+        // نسأل GPT: هل المستخدم يريد تسجيل مصروف أم يسأل سؤالاً؟
+        const intentCheck = await openai.chat.completions.create({
+            messages: [
+                { 
+                    role: "system", 
+                    content: `You are a helper. Decide if the user text is adding a new expense OR asking a question about past data.
+                    Return JSON ONLY: {"type": "record"} OR {"type": "query"}.
+                    Examples:
+                    "سجل غداء 20" -> record
+                    "شريت قهوة" -> record
+                    "كم صرفت؟" -> query
+                    "وش وضعي المالي؟" -> query
+                    "كم باقي لي؟" -> query`
+                },
+                { role: "user", content: text }
+            ],
+            model: "gpt-3.5-turbo",
+        });
+
+        const intentJson = intentCheck.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
+        const intent = JSON.parse(intentJson).type;
+
+        // ============================================================
+        // 📝 مسار 1: المستخدم يريد "تسجيل" مصروف
+        // ============================================================
+        if (intent === "record") {
+            const extraction = await openai.chat.completions.create({
                 messages: [
                     { 
                         role: "system", 
-                        content: `You are an expense tracker. Extract JSON: {"item":string, "amount":number, "category":string}. 
-                        Categories: Food, Transport, Bills, Shopping, Work, Other.
-                        If currency missing assume SAR. Return JSON ONLY.` 
+                        content: `Extract expense data to JSON: {"item":string, "amount":number, "category":string}. 
+                        Categories: Food, Transport, Bills, Shopping, Other. If currency missing assume SAR.` 
                     },
-                    { role: "user", content: `Extract from: "${text}"` }
+                    { role: "user", content: text }
                 ],
                 model: "gpt-3.5-turbo",
             });
 
-            // تنظيف الرد وتحويله لـ JSON
-            let content = gptResponse.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
-            const data = JSON.parse(content);
+            const dataContent = extraction.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
+            const data = JSON.parse(dataContent);
             data.raw_text = text;
 
-            // إرسال لـ Google Sheet
             await axios.post(SHEET_SCRIPT_URL, data);
-
-            // الرد عليك
             bot.sendMessage(chatId, `✅ *تم التسجيل:*\n📦 ${data.item}\n💰 ${data.amount} ريال\n📂 ${data.category}`, { parse_mode: 'Markdown' });
+        } 
+        
+        // ============================================================
+        // 🔍 مسار 2: المستخدم يسأل "سؤالاً" (تحليل بيانات)
+        // ============================================================
+        else {
+            bot.sendMessage(chatId, "🧐 لحظة أراجع سجلاتك...");
 
-        } catch (error) {
-            console.error("Error:", error);
-            bot.sendMessage(chatId, "❌ لم أتمكن من فهم المصروف، حاول مرة أخرى.");
+            // 1. جلب آخر البيانات من الشيت
+            const sheetResponse = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
+            const records = sheetResponse.data.records; // قائمة بآخر العمليات
+
+            if (!records || records.length === 0) {
+                bot.sendMessage(chatId, "لا توجد بيانات سابقة لتحليلها.");
+                return;
+            }
+
+            // 2. إعطاء البيانات لـ GPT ليجيب على سؤالك
+            const analysis = await openai.chat.completions.create({
+                messages: [
+                    { 
+                        role: "system", 
+                        content: `You are a financial advisor. Here is the user's recent transaction history:\n${JSON.stringify(records)}\n\nAnswer the user's question based strictly on this data. Be helpful, summarize if asked, and calculate totals if needed. Reply in Arabic.` 
+                    },
+                    { role: "user", content: text }
+                ],
+                model: "gpt-3.5-turbo",
+            });
+
+            bot.sendMessage(chatId, analysis.choices[0].message.content);
         }
+
+    } catch (error) {
+        console.error("Error:", error);
+        bot.sendMessage(chatId, "❌ حدث خطأ تقني، حاول مرة أخرى.");
     }
 });
