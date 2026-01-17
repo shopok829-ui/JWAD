@@ -5,7 +5,6 @@ const express = require('express');
 
 const app = express();
 
-// المتغيرات
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SHEET_SCRIPT_URL = process.env.SHEET_SCRIPT_URL;
@@ -17,7 +16,7 @@ if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
 }
 
 // =================================================================
-// 📊 الجزء الأول: نظام الداش بورد (Dashboard)
+// 📊 نظام الداش بورد المحاسبي (Balance Sheet Style)
 // =================================================================
 
 const getDashboardHTML = (records) => {
@@ -29,47 +28,73 @@ const getDashboardHTML = (records) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>محفظة جواد 📊</title>
+        <title>الميزانية الشخصية 💰</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;800&display=swap" rel="stylesheet">
         <style>
-            body { font-family: 'Tajawal', sans-serif; background-color: #f4f6f9; }
-            .header-gradient { background: linear-gradient(135deg, #1e3c72, #2a5298); color: white; padding: 2rem 0; margin-bottom: 2rem; border-radius: 0 0 20px 20px; }
-            .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 1rem; }
-            .metric-value { font-size: 1.6rem; font-weight: bold; color: #2c3e50; }
-            .chart-box { height: 300px; position: relative; }
-            .filter-btn.active { background-color: #1e3c72; color: white; border-color: #1e3c72; }
-            .badge-cat { font-size: 0.8em; padding: 5px 10px; border-radius: 10px; }
+            body { font-family: 'Tajawal', sans-serif; background-color: #f0f2f5; }
+            .header-gradient { background: linear-gradient(135deg, #134E5E, #71B280); color: white; padding: 2rem 0; border-radius: 0 0 25px 25px; margin-bottom: 2rem; }
+            .card { border: none; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+            .balance-card { background: #fff; border-right: 5px solid; }
+            .metric-title { font-size: 0.9rem; color: #6c757d; }
+            .metric-value { font-size: 1.8rem; font-weight: 800; }
+            .text-income { color: #198754; }  /* أخضر للدخل */
+            .text-expense { color: #dc3545; } /* أحمر للصرف */
+            .text-balance { color: #0d6efd; } /* أزرق للرصيد */
         </style>
     </head>
     <body>
         <div class="header-gradient text-center">
             <div class="container">
-                <h1>📊 لوحة التحكم المالية</h1>
-                <p class="opacity-75">تحليل المصاريف حسب التصنيفات المعتمدة</p>
-                <div class="mt-3">
-                    <button onclick="filterData('all')" class="btn btn-light filter-btn active" id="btn-all">الكل</button>
-                    <button onclick="filterData('month')" class="btn btn-light filter-btn" id="btn-month">هذا الشهر</button>
-                    <button onclick="filterData('week')" class="btn btn-light filter-btn" id="btn-week">آخر أسبوع</button>
+                <h1>💰 الميزانية الشخصية</h1>
+                <p class="opacity-75">مراقبة الدخل والمصروفات وصافي الرصيد</p>
+                <div class="btn-group mt-3" role="group">
+                    <button onclick="filterData('all')" class="btn btn-light active" id="btn-all">الكل</button>
+                    <button onclick="filterData('month')" class="btn btn-outline-light" id="btn-month">هذا الشهر</button>
                 </div>
             </div>
         </div>
 
         <div class="container mb-5">
             <div class="row g-3 mb-4">
-                <div class="col-md-4"><div class="card p-3 text-center"><small class="text-muted">إجمالي الصرف</small><div class="metric-value text-primary" id="totalDisplay">0</div></div></div>
-                <div class="col-md-4"><div class="card p-3 text-center"><small class="text-muted">عدد العمليات</small><div class="metric-value text-success" id="countDisplay">0</div></div></div>
-                <div class="col-md-4"><div class="card p-3 text-center"><small class="text-muted">متوسط العملية</small><div class="metric-value text-warning" id="avgDisplay">0</div></div></div>
+                <div class="col-md-4">
+                    <div class="card p-4 balance-card" style="border-color: #198754;">
+                        <span class="metric-title">📥 إجمالي الدخل</span>
+                        <div class="metric-value text-income" id="incomeDisplay">0</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-4 balance-card" style="border-color: #dc3545;">
+                        <span class="metric-title">📤 إجمالي المصروفات</span>
+                        <div class="metric-value text-expense" id="expenseDisplay">0</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-4 balance-card" style="border-color: #0d6efd;">
+                        <span class="metric-title">💎 صافي الرصيد (المتبقي)</span>
+                        <div class="metric-value text-balance" id="balanceDisplay">0</div>
+                    </div>
+                </div>
             </div>
 
             <div class="row g-3 mb-4">
-                <div class="col-md-6"><div class="card p-3"><h5>توزيع البنود (القطاعات)</h5><div class="chart-box"><canvas id="categoryChart"></canvas></div></div></div>
-                <div class="col-md-6"><div class="card p-3"><h5>التطور اليومي</h5><div class="chart-box"><canvas id="trendChart"></canvas></div></div></div>
+                <div class="col-md-8">
+                    <div class="card p-3">
+                        <h5>تحليل المصروفات (أين تذهب أموالك؟)</h5>
+                        <div style="height: 300px;"><canvas id="expenseChart"></canvas></div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-3">
+                        <h5>نسبة الصرف من الدخل</h5>
+                        <div style="height: 300px;"><canvas id="ratioChart"></canvas></div>
+                    </div>
+                </div>
             </div>
 
             <div class="card p-3">
-                <h5>📝 سجل العمليات</h5>
+                <h5>📝 سجل العمليات الأخيرة</h5>
                 <div class="table-responsive">
                     <table class="table table-hover align-middle">
                         <thead class="table-light"><tr><th>التاريخ</th><th>البند</th><th>التصنيف</th><th>المبلغ</th></tr></thead>
@@ -81,7 +106,7 @@ const getDashboardHTML = (records) => {
 
         <script>
             const rawData = JSON.parse("${safeRecords}");
-            let catChart = null; let trendChart = null;
+            let expenseChartInst = null; let ratioChartInst = null;
             
             const processedData = rawData.map(item => {
                 const parts = item.date.split('/');
@@ -89,61 +114,85 @@ const getDashboardHTML = (records) => {
             });
 
             function filterData(type) {
-                document.querySelectorAll('.filter-btn').forEach(b => { b.classList.remove('active', 'btn-primary'); b.classList.add('btn-light'); });
-                document.getElementById('btn-'+type).classList.add('active', 'btn-primary');
-                document.getElementById('btn-'+type).classList.remove('btn-light');
+                document.getElementById('btn-all').className = 'btn btn-outline-light';
+                document.getElementById('btn-month').className = 'btn btn-outline-light';
+                document.getElementById('btn-'+type).className = 'btn btn-light active';
 
                 const now = new Date();
                 let filtered = processedData;
-                if(type === 'month') filtered = processedData.filter(d => d.dateObj.getMonth() === now.getMonth() && d.dateObj.getFullYear() === now.getFullYear());
-                if(type === 'week') { const lastWeek = new Date(); lastWeek.setDate(now.getDate() - 7); filtered = processedData.filter(d => d.dateObj >= lastWeek); }
+                
+                if(type === 'month') {
+                    filtered = processedData.filter(d => d.dateObj.getMonth() === now.getMonth() && d.dateObj.getFullYear() === now.getFullYear());
+                }
                 
                 updateUI(filtered);
             }
 
             function updateUI(data) {
-                const total = data.reduce((s, i) => s + (i.amount||0), 0);
-                document.getElementById('totalDisplay').innerText = total.toLocaleString() + ' ر.س';
-                document.getElementById('countDisplay').innerText = data.length;
-                document.getElementById('avgDisplay').innerText = (data.length ? (total/data.length).toFixed(0) : 0) + ' ر.س';
+                // 1. الحسابات
+                let totalIncome = 0;
+                let totalExpense = 0;
+                const expenseCats = {};
 
-                document.getElementById('transactionsTable').innerHTML = data.slice(-10).reverse().map(i => 
-                    \`<tr>
+                data.forEach(i => {
+                    if (i.type === 'income') {
+                        totalIncome += i.amount;
+                    } else {
+                        totalExpense += i.amount;
+                        expenseCats[i.category] = (expenseCats[i.category] || 0) + i.amount;
+                    }
+                });
+
+                const balance = totalIncome - totalExpense;
+
+                // 2. تحديث الأرقام
+                document.getElementById('incomeDisplay').innerText = totalIncome.toLocaleString() + ' ر.س';
+                document.getElementById('expenseDisplay').innerText = totalExpense.toLocaleString() + ' ر.س';
+                document.getElementById('balanceDisplay').innerText = balance.toLocaleString() + ' ر.س';
+
+                // 3. تحديث الجدول
+                document.getElementById('transactionsTable').innerHTML = data.slice(-10).reverse().map(i => {
+                    const color = i.type === 'income' ? 'text-success' : 'text-danger';
+                    const sign = i.type === 'income' ? '+' : '-';
+                    return \`<tr>
                         <td>\${i.date}</td>
                         <td class="fw-bold">\${i.item}</td>
-                        <td><span class="badge bg-secondary badge-cat">\${i.category}</span></td>
-                        <td class="text-danger">-\${i.amount}</td>
-                    </tr>\`
-                ).join('');
+                        <td><span class="badge bg-secondary">\${i.category}</span></td>
+                        <td class="\${color} fw-bold" dir="ltr">\${sign}\${i.amount}</td>
+                    </tr>\`;
+                }).join('');
 
-                const cats = {}; const dates = {};
-                data.forEach(i => {
-                    cats[i.category] = (cats[i.category]||0) + i.amount;
-                    dates[i.date] = (dates[i.date]||0) + i.amount;
-                });
-
-                if(catChart) catChart.destroy();
-                catChart = new Chart(document.getElementById('categoryChart'), {
-                    type: 'doughnut',
-                    data: { 
-                        labels: Object.keys(cats), 
-                        datasets: [{ 
-                            data: Object.values(cats), 
-                            backgroundColor: ['#2ecc71', '#3498db', '#9b59b6', '#f1c40f', '#e74c3c', '#34495e', '#1abc9c', '#e67e22'],
-                            borderWidth: 0
-                        }] 
+                // 4. الرسم البياني (توزيع المصاريف)
+                if(expenseChartInst) expenseChartInst.destroy();
+                expenseChartInst = new Chart(document.getElementById('expenseChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: Object.keys(expenseCats),
+                        datasets: [{
+                            label: 'المبلغ',
+                            data: Object.values(expenseCats),
+                            backgroundColor: '#dc3545',
+                            borderRadius: 5
+                        }]
                     },
-                    options: { maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+                    options: { indexAxis: 'y', maintainAspectRatio: false }
                 });
 
-                if(trendChart) trendChart.destroy();
-                const sortedDates = Object.keys(dates).sort((a,b) => { const x=a.split('/'); const y=b.split('/'); return new Date(x[2],x[1]-1,x[0]) - new Date(y[2],y[1]-1,y[0]); });
-                trendChart = new Chart(document.getElementById('trendChart'), {
-                    type: 'line',
-                    data: { labels: sortedDates, datasets: [{ label: 'الصرف اليومي', data: sortedDates.map(d=>dates[d]), borderColor: '#1e3c72', tension: 0.3, fill: true, backgroundColor: 'rgba(30, 60, 114, 0.1)' }] },
+                // 5. الرسم البياني (الدخل vs الصرف)
+                if(ratioChartInst) ratioChartInst.destroy();
+                ratioChartInst = new Chart(document.getElementById('ratioChart'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['المصروفات', 'المتبقي'],
+                        datasets: [{
+                            data: [totalExpense, Math.max(0, balance)],
+                            backgroundColor: ['#dc3545', '#198754']
+                        }]
+                    },
                     options: { maintainAspectRatio: false }
                 });
             }
+
             filterData('all');
         </script>
     </body>
@@ -151,29 +200,26 @@ const getDashboardHTML = (records) => {
     `;
 };
 
-// راوت الصفحة الرئيسية
+// الراوت
 app.get('/', async (req, res) => {
     try {
         const response = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
         const records = response.data.records || [];
         res.send(getDashboardHTML(records));
     } catch (error) {
-        res.send(`<h1>جاري تحميل البيانات... انتظر لحظة وحدث الصفحة</h1><p>${error.message}</p>`);
+        res.send(`<h1>Error: ${error.message}</h1>`);
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
+app.listen(3000, () => console.log(`Server started`));
 
 // =================================================================
-// 🤖 الجزء الثاني: البوت الذكي (المحاسب)
+// 🤖 البوت الذكي (النسخة المحاسبية)
 // =================================================================
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 let pendingTransaction = null; 
-
-console.log('✅ Bot is Ready with NEW Categories Structure!');
 
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
@@ -183,19 +229,16 @@ bot.on('message', async (msg) => {
     if (ALLOWED_USER_ID && userId !== ALLOWED_USER_ID) return;
     if (!text) return;
 
-    // 1. معالجة الردود المعلقة (اختيار التصنيف)
+    // معالجة الردود المعلقة
     if (pendingTransaction) {
         const chosenCategory = text.trim();
-        const finalData = {
-            item: pendingTransaction.item,
-            amount: pendingTransaction.amount,
-            category: chosenCategory,
-            raw_text: pendingTransaction.raw_text
-        };
-        bot.sendMessage(chatId, `🔄 تم الاعتماد: *${chosenCategory}*`, { parse_mode: 'Markdown' });
+        const finalData = { ...pendingTransaction, category: chosenCategory }; // دمج البيانات
+        
+        bot.sendMessage(chatId, `🔄 تم اعتماد: *${chosenCategory}*`, { parse_mode: 'Markdown' });
         try {
             await axios.post(SHEET_SCRIPT_URL, finalData);
-            bot.sendMessage(chatId, `✅ *تم التقييد:* ${finalData.item} (${finalData.amount} ريال) - ${finalData.category}`, { parse_mode: 'Markdown' });
+            const emoji = finalData.type === 'income' ? '💰' : '💸';
+            bot.sendMessage(chatId, `✅ *تم التقييد:* ${finalData.item} (${finalData.amount}) - ${finalData.category} ${emoji}`, { parse_mode: 'Markdown' });
             pendingTransaction = null; 
         } catch (error) {
             bot.sendMessage(chatId, "❌ خطأ في الحفظ.");
@@ -206,56 +249,47 @@ bot.on('message', async (msg) => {
     bot.sendChatAction(chatId, 'typing');
 
     try {
-        // 2. تصنيف النية (كتابة أم قراءة)
+        // 1. تحديد النية (تسجيل أم قراءة)
         const intentCheck = await openai.chat.completions.create({
             messages: [
-                { role: "system", content: `Classify intent: {"type": "write"} for recording expenses, {"type": "read"} for questions/analysis. Return JSON.` },
+                { role: "system", content: `Classify intent: 
+                - "write": recording transaction (expense OR income).
+                - "read": asking about balance, total, history.
+                Return JSON: {"type": "write"} OR {"type": "read"}` },
                 { role: "user", content: text }
             ],
             model: "gpt-3.5-turbo",
         });
         const intent = JSON.parse(intentCheck.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim()).type;
 
-        // 3. التنفيذ
         if (intent === "write") {
             const extraction = await openai.chat.completions.create({
                 messages: [
                     { 
                         role: "system", 
-                        content: `Extract expense JSON: {"item": string, "amount": number, "category": string}.
+                        content: `Extract transaction data into JSON: 
+                        {"item": string, "amount": number, "category": string, "type": "income" | "expense"}.
                         
-                        You MUST map the input strictly to one of the following Sub-Categories:
+                        STEP 1: Determine TYPE.
+                        - INCOME keywords: "راتب", "نزل", "تحويل لي", "إيداع", "مكافأة", "دخل", "salary", "deposit".
+                        - EXPENSE keywords: "شريت", "دفعت", "سوبرماركت", "فاتورة", "بنزين", "spent", "paid".
 
-                        1. المصاريف الثابتة (Obligations):
-                           - "السكن"
-                           - "الفواتير الخدمية"
-                           - "الاتصالات والإنترنت"
-                           - "التعليم"
-                           - "العمالة المنزلية"
-                           - "الأقساط البنكية"
-
-                        2. المصاريف المتغيرة (Living Needs):
-                           - "السوبر ماركت" (Groceries, cleaning, tissue) -> NOT Restaurants!
-                           - "النقل والمواصلات" (Gas, Uber, Maintenance)
-                           - "الصحة"
-                           - "مستلزمات الأطفال"
-
-                        3. المصاريف الشخصية والاجتماعية (Lifestyle):
-                           - "المطاعم والكافيهات" (Dining out, Coffee, Delivery)
-                           - "الترفيه" (Cinema, subscriptions, games)
-                           - "العناية الشخصية" (Barber, Clothes, Perfume)
-                           - "الواجبات الاجتماعية" (Gifts, Family help)
-
-                        4. التخطيط للمستقبل (Future):
-                           - "الادخار للطوارئ"
-                           - "الادخار لأهداف مستقبلية"
-                           - "الاستثمار"
-
-                        RULES:
-                        - If item is clear (e.g., "Burger" -> "المطاعم والكافيهات"), auto-categorize.
-                        - If item is ambiguous (e.g., "Noon", "Transfer", "Purchase"), use "ASK_USER".
+                        STEP 2: Determine CATEGORY based on TYPE.
                         
-                        Return JSON.` 
+                        [IF TYPE = "expense"]: Use your previous expense categories:
+                        (السكن, الفواتير, السوبر ماركت, المطاعم, النقل, الصحة, الترفيه, ...etc).
+
+                        [IF TYPE = "income"]: Use these categories:
+                        - "الراتب الشهري"
+                        - "دخل إضافي"
+                        - "عيدية/هدايا"
+                        - "استرداد مبلغ"
+                        - "تحويلات واردة"
+
+                        STEP 3: Ambiguity Check.
+                        If item is ambiguous (e.g. "Transfer 500" - could be in or out?), set category to "ASK_USER" and type to "expense" (default).
+
+                        Return JSON ONLY.` 
                     },
                     { role: "user", content: text }
                 ],
@@ -265,15 +299,15 @@ bot.on('message', async (msg) => {
             data.raw_text = text;
 
             if (data.category === "ASK_USER") {
-                pendingTransaction = { item: data.item, amount: data.amount, raw_text: text };
-                bot.sendMessage(chatId, `❓ *توضيح مطلوب:* ما تصنيف "${data.item}" (${data.amount} ريال)؟`, { 
+                pendingTransaction = { item: data.item, amount: data.amount, raw_text: text, type: data.type };
+                bot.sendMessage(chatId, `❓ *توضيح مطلوب:* ما تصنيف "${data.item}" (${data.amount})؟`, { 
                     parse_mode: 'Markdown',
                     reply_markup: {
                         keyboard: [
                             ["السوبر ماركت", "المطاعم والكافيهات"],
-                            ["النقل والمواصلات", "العناية الشخصية"],
-                            ["مستلزمات الأطفال", "الواجبات الاجتماعية"],
-                            ["الفواتير الخدمية", "إلغاء"]
+                            ["الراتب الشهري", "دخل إضافي"], // خيارات دخل وصرف
+                            ["النقل والمواصلات", "الفواتير الخدمية"],
+                            ["إلغاء"]
                         ],
                         one_time_keyboard: true, resize_keyboard: true
                     }
@@ -282,27 +316,32 @@ bot.on('message', async (msg) => {
             }
 
             await axios.post(SHEET_SCRIPT_URL, data);
-            bot.sendMessage(chatId, `✅ *تم التقييد:* ${data.item} (${data.amount} ريال)\n🏷️ ${data.category}`, { parse_mode: 'Markdown' });
+            const emoji = data.type === 'income' ? '💰' : '💸';
+            bot.sendMessage(chatId, `✅ *تم التقييد:* ${data.item} (${data.amount} ريال)\n🏷️ ${data.category} ${emoji}`, { parse_mode: 'Markdown' });
 
         } else {
-            // القراءة والتحليل (مع معرفة الهيكلة الجديدة)
+            // القراءة والتحليل
             const sheetResponse = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
             const records = sheetResponse.data.records || [];
-            const recordsText = records.map(r => `[${r.date}, ${r.item}, ${r.amount}, ${r.category}]`).join("\n");
+            
+            // تجهيز ملخص مالي لـ GPT
+            let totalIncome = 0; let totalExpense = 0;
+            records.forEach(r => {
+                if(r.type === 'income') totalIncome += r.amount;
+                else totalExpense += r.amount;
+            });
+            const balance = totalIncome - totalExpense;
 
             const analysis = await openai.chat.completions.create({
                 messages: [
                     { 
                         role: "system", 
-                        content: `You are a financial advisor using this structure:
-                        1. Fixed (السكن, الفواتير, etc.)
-                        2. Variable (السوبر ماركت, النقل, etc.)
-                        3. Lifestyle (المطاعم, الترفيه, etc.)
-                        4. Future (الادخار, الاستثمار)
+                        content: `Financial accountant. 
+                        Summary: Total Income=${totalIncome}, Total Expense=${totalExpense}, Balance=${balance}.
+                        Recent Data: ${JSON.stringify(records.slice(-20))}
                         
-                        Data:\n${recordsText}
-                        
-                        Task: Answer user in Arabic. Calculate totals per Main Category if asked. Be helpful.` 
+                        User Question: "${text}"
+                        Answer in Arabic. Explain the balance situation.` 
                     },
                     { role: "user", content: text }
                 ],
@@ -314,6 +353,6 @@ bot.on('message', async (msg) => {
     } catch (error) {
         console.error(error);
         pendingTransaction = null;
-        bot.sendMessage(chatId, "⚠️ خطأ بسيط، حاول مرة أخرى.");
+        bot.sendMessage(chatId, "⚠️ خطأ بسيط.");
     }
 });
