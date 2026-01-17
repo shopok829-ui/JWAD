@@ -34,18 +34,20 @@ const getDashboardHTML = (records) => {
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet">
         <style>
-            body { font-family: 'Tajawal', sans-serif; background-color: #f0f2f5; }
-            .header-gradient { background: linear-gradient(135deg, #0d6efd, #0dcaf0); color: white; padding: 2rem 0; margin-bottom: 2rem; border-radius: 0 0 20px 20px; }
-            .card { border: none; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
-            .metric-value { font-size: 1.8rem; font-weight: bold; color: #2c3e50; }
+            body { font-family: 'Tajawal', sans-serif; background-color: #f4f6f9; }
+            .header-gradient { background: linear-gradient(135deg, #1e3c72, #2a5298); color: white; padding: 2rem 0; margin-bottom: 2rem; border-radius: 0 0 20px 20px; }
+            .card { border: none; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 1rem; }
+            .metric-value { font-size: 1.6rem; font-weight: bold; color: #2c3e50; }
             .chart-box { height: 300px; position: relative; }
-            .filter-btn.active { background-color: #0d6efd; color: white; }
+            .filter-btn.active { background-color: #1e3c72; color: white; border-color: #1e3c72; }
+            .badge-cat { font-size: 0.8em; padding: 5px 10px; border-radius: 10px; }
         </style>
     </head>
     <body>
         <div class="header-gradient text-center">
             <div class="container">
                 <h1>📊 لوحة التحكم المالية</h1>
+                <p class="opacity-75">تحليل المصاريف حسب التصنيفات المعتمدة</p>
                 <div class="mt-3">
                     <button onclick="filterData('all')" class="btn btn-light filter-btn active" id="btn-all">الكل</button>
                     <button onclick="filterData('month')" class="btn btn-light filter-btn" id="btn-month">هذا الشهر</button>
@@ -55,22 +57,22 @@ const getDashboardHTML = (records) => {
         </div>
 
         <div class="container mb-5">
-            <div class="row g-4 mb-4">
-                <div class="col-md-4"><div class="card p-3 text-center"><small>الإجمالي</small><div class="metric-value text-primary" id="totalDisplay">0</div></div></div>
-                <div class="col-md-4"><div class="card p-3 text-center"><small>العمليات</small><div class="metric-value text-success" id="countDisplay">0</div></div></div>
-                <div class="col-md-4"><div class="card p-3 text-center"><small>المتوسط</small><div class="metric-value text-warning" id="avgDisplay">0</div></div></div>
+            <div class="row g-3 mb-4">
+                <div class="col-md-4"><div class="card p-3 text-center"><small class="text-muted">إجمالي الصرف</small><div class="metric-value text-primary" id="totalDisplay">0</div></div></div>
+                <div class="col-md-4"><div class="card p-3 text-center"><small class="text-muted">عدد العمليات</small><div class="metric-value text-success" id="countDisplay">0</div></div></div>
+                <div class="col-md-4"><div class="card p-3 text-center"><small class="text-muted">متوسط العملية</small><div class="metric-value text-warning" id="avgDisplay">0</div></div></div>
             </div>
 
-            <div class="row g-4 mb-4">
-                <div class="col-md-6"><div class="card p-3"><h5>توزيع الفئات</h5><div class="chart-box"><canvas id="categoryChart"></canvas></div></div></div>
-                <div class="col-md-6"><div class="card p-3"><h5>التطور الزمني</h5><div class="chart-box"><canvas id="trendChart"></canvas></div></div></div>
+            <div class="row g-3 mb-4">
+                <div class="col-md-6"><div class="card p-3"><h5>توزيع البنود (القطاعات)</h5><div class="chart-box"><canvas id="categoryChart"></canvas></div></div></div>
+                <div class="col-md-6"><div class="card p-3"><h5>التطور اليومي</h5><div class="chart-box"><canvas id="trendChart"></canvas></div></div></div>
             </div>
 
             <div class="card p-3">
-                <h5>📝 آخر العمليات</h5>
+                <h5>📝 سجل العمليات</h5>
                 <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead><tr><th>التاريخ</th><th>البند</th><th>التصنيف</th><th>المبلغ</th></tr></thead>
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light"><tr><th>التاريخ</th><th>البند</th><th>التصنيف</th><th>المبلغ</th></tr></thead>
                         <tbody id="transactionsTable"></tbody>
                     </table>
                 </div>
@@ -106,7 +108,12 @@ const getDashboardHTML = (records) => {
                 document.getElementById('avgDisplay').innerText = (data.length ? (total/data.length).toFixed(0) : 0) + ' ر.س';
 
                 document.getElementById('transactionsTable').innerHTML = data.slice(-10).reverse().map(i => 
-                    \`<tr><td>\${i.date}</td><td>\${i.item}</td><td><span class="badge bg-secondary">\${i.category}</span></td><td class="text-danger">-\${i.amount}</td></tr>\`
+                    \`<tr>
+                        <td>\${i.date}</td>
+                        <td class="fw-bold">\${i.item}</td>
+                        <td><span class="badge bg-secondary badge-cat">\${i.category}</span></td>
+                        <td class="text-danger">-\${i.amount}</td>
+                    </tr>\`
                 ).join('');
 
                 const cats = {}; const dates = {};
@@ -118,7 +125,14 @@ const getDashboardHTML = (records) => {
                 if(catChart) catChart.destroy();
                 catChart = new Chart(document.getElementById('categoryChart'), {
                     type: 'doughnut',
-                    data: { labels: Object.keys(cats), datasets: [{ data: Object.values(cats), backgroundColor: ['#3498db','#e74c3c','#f1c40f','#2ecc71','#9b59b6'] }] },
+                    data: { 
+                        labels: Object.keys(cats), 
+                        datasets: [{ 
+                            data: Object.values(cats), 
+                            backgroundColor: ['#2ecc71', '#3498db', '#9b59b6', '#f1c40f', '#e74c3c', '#34495e', '#1abc9c', '#e67e22'],
+                            borderWidth: 0
+                        }] 
+                    },
                     options: { maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
                 });
 
@@ -126,7 +140,7 @@ const getDashboardHTML = (records) => {
                 const sortedDates = Object.keys(dates).sort((a,b) => { const x=a.split('/'); const y=b.split('/'); return new Date(x[2],x[1]-1,x[0]) - new Date(y[2],y[1]-1,y[0]); });
                 trendChart = new Chart(document.getElementById('trendChart'), {
                     type: 'line',
-                    data: { labels: sortedDates, datasets: [{ label: 'مصروف يومي', data: sortedDates.map(d=>dates[d]), borderColor: '#0d6efd', tension: 0.3, fill: true }] },
+                    data: { labels: sortedDates, datasets: [{ label: 'الصرف اليومي', data: sortedDates.map(d=>dates[d]), borderColor: '#1e3c72', tension: 0.3, fill: true, backgroundColor: 'rgba(30, 60, 114, 0.1)' }] },
                     options: { maintainAspectRatio: false }
                 });
             }
@@ -144,7 +158,7 @@ app.get('/', async (req, res) => {
         const records = response.data.records || [];
         res.send(getDashboardHTML(records));
     } catch (error) {
-        res.send(`<h1>خطأ في الاتصال: ${error.message}</h1>`);
+        res.send(`<h1>جاري تحميل البيانات... انتظر لحظة وحدث الصفحة</h1><p>${error.message}</p>`);
     }
 });
 
@@ -152,14 +166,14 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
 
 // =================================================================
-// 🤖 الجزء الثاني: البوت الذكي (Smart Bot)
+// 🤖 الجزء الثاني: البوت الذكي (المحاسب)
 // =================================================================
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 let pendingTransaction = null; 
 
-console.log('✅ Bot & Dashboard Ready!');
+console.log('✅ Bot is Ready with NEW Categories Structure!');
 
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
@@ -178,7 +192,7 @@ bot.on('message', async (msg) => {
             category: chosenCategory,
             raw_text: pendingTransaction.raw_text
         };
-        bot.sendMessage(chatId, `🔄 تم اعتماد: *${chosenCategory}*`, { parse_mode: 'Markdown' });
+        bot.sendMessage(chatId, `🔄 تم الاعتماد: *${chosenCategory}*`, { parse_mode: 'Markdown' });
         try {
             await axios.post(SHEET_SCRIPT_URL, finalData);
             bot.sendMessage(chatId, `✅ *تم التقييد:* ${finalData.item} (${finalData.amount} ريال) - ${finalData.category}`, { parse_mode: 'Markdown' });
@@ -195,7 +209,7 @@ bot.on('message', async (msg) => {
         // 2. تصنيف النية (كتابة أم قراءة)
         const intentCheck = await openai.chat.completions.create({
             messages: [
-                { role: "system", content: `Classify intent: {"type": "write"} for expenses, {"type": "read"} for questions/analysis. Return JSON.` },
+                { role: "system", content: `Classify intent: {"type": "write"} for recording expenses, {"type": "read"} for questions/analysis. Return JSON.` },
                 { role: "user", content: text }
             ],
             model: "gpt-3.5-turbo",
@@ -209,15 +223,38 @@ bot.on('message', async (msg) => {
                     { 
                         role: "system", 
                         content: `Extract expense JSON: {"item": string, "amount": number, "category": string}.
-                        CATEGORIES:
-                        - "السكن", "الفواتير الخدمية", "الاتصالات والإنترنت", "التعليم", "العمالة المنزلية", "الأقساط البنكية"
-                        - "السوبر ماركت", "النقل والمواصلات", "الصحة", "مستلزمات الأطفال"
-                        - "المطاعم والكافيهات", "الترفيه", "العناية الشخصية", "الواجبات الاجتماعية"
-                        - "الادخار للطوارئ", "الادخار لأهداف مستقبلية", "الاستثمار"
+                        
+                        You MUST map the input strictly to one of the following Sub-Categories:
+
+                        1. المصاريف الثابتة (Obligations):
+                           - "السكن"
+                           - "الفواتير الخدمية"
+                           - "الاتصالات والإنترنت"
+                           - "التعليم"
+                           - "العمالة المنزلية"
+                           - "الأقساط البنكية"
+
+                        2. المصاريف المتغيرة (Living Needs):
+                           - "السوبر ماركت" (Groceries, cleaning, tissue) -> NOT Restaurants!
+                           - "النقل والمواصلات" (Gas, Uber, Maintenance)
+                           - "الصحة"
+                           - "مستلزمات الأطفال"
+
+                        3. المصاريف الشخصية والاجتماعية (Lifestyle):
+                           - "المطاعم والكافيهات" (Dining out, Coffee, Delivery)
+                           - "الترفيه" (Cinema, subscriptions, games)
+                           - "العناية الشخصية" (Barber, Clothes, Perfume)
+                           - "الواجبات الاجتماعية" (Gifts, Family help)
+
+                        4. التخطيط للمستقبل (Future):
+                           - "الادخار للطوارئ"
+                           - "الادخار لأهداف مستقبلية"
+                           - "الاستثمار"
 
                         RULES:
-                        1. Guess category if item is clear (e.g. Burger -> المطاعم, Uber -> النقل).
-                        2. Use "ASK_USER" ONLY if item is ambiguous (e.g. "Noon", "Transfer", "Purchase").
+                        - If item is clear (e.g., "Burger" -> "المطاعم والكافيهات"), auto-categorize.
+                        - If item is ambiguous (e.g., "Noon", "Transfer", "Purchase"), use "ASK_USER".
+                        
                         Return JSON.` 
                     },
                     { role: "user", content: text }
@@ -236,7 +273,7 @@ bot.on('message', async (msg) => {
                             ["السوبر ماركت", "المطاعم والكافيهات"],
                             ["النقل والمواصلات", "العناية الشخصية"],
                             ["مستلزمات الأطفال", "الواجبات الاجتماعية"],
-                            ["الترفيه", "إلغاء"]
+                            ["الفواتير الخدمية", "إلغاء"]
                         ],
                         one_time_keyboard: true, resize_keyboard: true
                     }
@@ -245,17 +282,28 @@ bot.on('message', async (msg) => {
             }
 
             await axios.post(SHEET_SCRIPT_URL, data);
-            bot.sendMessage(chatId, `✅ *تم التقييد:* ${data.item} (${data.amount} ريال) - ${data.category}`, { parse_mode: 'Markdown' });
+            bot.sendMessage(chatId, `✅ *تم التقييد:* ${data.item} (${data.amount} ريال)\n🏷️ ${data.category}`, { parse_mode: 'Markdown' });
 
         } else {
-            // القراءة والتحليل
+            // القراءة والتحليل (مع معرفة الهيكلة الجديدة)
             const sheetResponse = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
             const records = sheetResponse.data.records || [];
             const recordsText = records.map(r => `[${r.date}, ${r.item}, ${r.amount}, ${r.category}]`).join("\n");
 
             const analysis = await openai.chat.completions.create({
                 messages: [
-                    { role: "system", content: `Financial advisor. Data:\n${recordsText}\nAnswer in Arabic.` },
+                    { 
+                        role: "system", 
+                        content: `You are a financial advisor using this structure:
+                        1. Fixed (السكن, الفواتير, etc.)
+                        2. Variable (السوبر ماركت, النقل, etc.)
+                        3. Lifestyle (المطاعم, الترفيه, etc.)
+                        4. Future (الادخار, الاستثمار)
+                        
+                        Data:\n${recordsText}
+                        
+                        Task: Answer user in Arabic. Calculate totals per Main Category if asked. Be helpful.` 
+                    },
                     { role: "user", content: text }
                 ],
                 model: "gpt-3.5-turbo",
