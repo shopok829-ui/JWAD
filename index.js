@@ -5,117 +5,141 @@ const express = require('express');
 
 const app = express();
 
-// المتغيرات
+// المتغيرات البيئية
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SHEET_SCRIPT_URL = process.env.SHEET_SCRIPT_URL;
 const ALLOWED_USER_ID = process.env.ALLOWED_USER_ID;
 
+// التحقق من المتغيرات
 if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
-    console.error("❌ Error: Missing Variables!");
+    console.error("❌ Error: Missing Environment Variables!");
     process.exit(1);
 }
 
+// سيرفر Render
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Smart Bot is Active 🧠'));
-app.listen(PORT, () => console.log(`🌍 Port: ${PORT}`));
+app.get('/', (req, res) => res.send('AI Accountant Bot is Running 🧠💰'));
+app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
 
+// إعداد البوت
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-console.log('✅ Smart Bot Ready');
+console.log('✅ Bot is ready to serve...');
 
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
     const userId = msg.from.id.toString();
 
+    // 1. حماية البوت
     if (ALLOWED_USER_ID && userId !== ALLOWED_USER_ID) return;
-
     if (!text) return;
 
+    // إشعار بالكتابة
     bot.sendChatAction(chatId, 'typing');
 
     try {
-        // 🧠 الخطوة 1: فهم النية (Intent Classification)
-        // نسأل GPT: هل المستخدم يريد تسجيل مصروف أم يسأل سؤالاً؟
+        // 🧠 المرحلة الأولى: الفهم (التوجيه)
+        // نسأل GPT: ماذا يريد المستخدم؟ تسجيل (write) أم تحليل وسواليف (read)؟
         const intentCheck = await openai.chat.completions.create({
             messages: [
                 { 
                     role: "system", 
-                    content: `You are a helper. Decide if the user text is adding a new expense OR asking a question about past data.
-                    Return JSON ONLY: {"type": "record"} OR {"type": "query"}.
-                    Examples:
-                    "سجل غداء 20" -> record
-                    "شريت قهوة" -> record
-                    "كم صرفت؟" -> query
-                    "وش وضعي المالي؟" -> query
-                    "كم باقي لي؟" -> query`
+                    content: `You are a router. Classify the user input into one of two JSON outputs:
+                    1. If the user wants to ADD/RECORD a transaction: {"type": "write"}
+                    2. If the user asks a question, wants a summary, analysis, or checks totals: {"type": "read"}
+                    
+                    Input: "سجل 50 ريال عشاء" -> Output: {"type": "write"}
+                    Input: "شريت بنزين" -> Output: {"type": "write"}
+                    Input: "كم صرفت؟" -> Output: {"type": "read"}
+                    Input: "وش اكثر شي صرفت عليه؟" -> Output: {"type": "read"}
+                    Input: "كم باقي معي؟" -> Output: {"type": "read"}
+                    Input: "تحليل لمصاريفي" -> Output: {"type": "read"}
+                    
+                    Return JSON ONLY.` 
                 },
                 { role: "user", content: text }
             ],
             model: "gpt-3.5-turbo",
+            temperature: 0.1 // دقة عالية، إبداع قليل في التصنيف
         });
 
         const intentJson = intentCheck.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
         const intent = JSON.parse(intentJson).type;
 
-        // ============================================================
-        // 📝 مسار 1: المستخدم يريد "تسجيل" مصروف
-        // ============================================================
-        if (intent === "record") {
+        // =========================================================
+        // 📝 المسار الأول: التسجيل (الكتابة في الشيت)
+        // =========================================================
+        if (intent === "write") {
             const extraction = await openai.chat.completions.create({
                 messages: [
                     { 
                         role: "system", 
-                        content: `Extract expense data to JSON: {"item":string, "amount":number, "category":string}. 
-                        Categories: Food, Transport, Bills, Shopping, Other. If currency missing assume SAR.` 
+                        content: `You are a data extractor. Extract expense details into JSON: 
+                        {"item": string, "amount": number, "category": string}.
+                        Categories: Food, Transport, Bills, Shopping, Groceries, Other.
+                        If currency is missing, assume it is local. Return JSON ONLY.` 
                     },
                     { role: "user", content: text }
                 ],
                 model: "gpt-3.5-turbo",
             });
 
-            const dataContent = extraction.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim();
-            const data = JSON.parse(dataContent);
+            const data = JSON.parse(extraction.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim());
             data.raw_text = text;
 
+            // الحفظ في الشيت
             await axios.post(SHEET_SCRIPT_URL, data);
-            bot.sendMessage(chatId, `✅ *تم التسجيل:*\n📦 ${data.item}\n💰 ${data.amount} ريال\n📂 ${data.category}`, { parse_mode: 'Markdown' });
+            
+            // الرد
+            bot.sendMessage(chatId, `✅ *تم تقييد العملية:*\n📦 البند: ${data.item}\n💸 المبلغ: ${data.amount}\n📂 التصنيف: ${data.category}`, { parse_mode: 'Markdown' });
         } 
         
-        // ============================================================
-        // 🔍 مسار 2: المستخدم يسأل "سؤالاً" (تحليل بيانات)
-        // ============================================================
+        // =========================================================
+        // 📊 المسار الثاني: المحاسب الذكي (قراءة وتحليل)
+        // =========================================================
         else {
-            bot.sendMessage(chatId, "🧐 لحظة أراجع سجلاتك...");
+            bot.sendMessage(chatId, "🧐 دقيقة أراجع الدفاتر...");
 
-            // 1. جلب آخر البيانات من الشيت
+            // 1. جلب البيانات من الشيت
             const sheetResponse = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
-            const records = sheetResponse.data.records; // قائمة بآخر العمليات
+            const records = sheetResponse.data.records;
 
             if (!records || records.length === 0) {
-                bot.sendMessage(chatId, "لا توجد بيانات سابقة لتحليلها.");
+                bot.sendMessage(chatId, "📭 سجلك نظيف! لا توجد بيانات مسجلة حتى الآن.");
                 return;
             }
 
-            // 2. إعطاء البيانات لـ GPT ليجيب على سؤالك
+            // 2. إعطاء البيانات + سؤالك لـ GPT ليجيب
             const analysis = await openai.chat.completions.create({
                 messages: [
                     { 
                         role: "system", 
-                        content: `You are a financial advisor. Here is the user's recent transaction history:\n${JSON.stringify(records)}\n\nAnswer the user's question based strictly on this data. Be helpful, summarize if asked, and calculate totals if needed. Reply in Arabic.` 
+                        content: `You are a smart financial accountant named "Jawad's Assistant".
+                        I will give you a list of recent transactions.
+                        You must answer the user's question based strictly on this data.
+                        
+                        - You can calculate totals.
+                        - You can find the highest spending category.
+                        - You can give advice if asked.
+                        - Reply in a friendly Arabic tone.
+                        
+                        Data:
+                        ${JSON.stringify(records)}` 
                     },
                     { role: "user", content: text }
                 ],
-                model: "gpt-3.5-turbo",
+                model: "gpt-3.5-turbo", // أو gpt-4o-mini إذا توفرت
             });
 
+            // إرسال رد المحاسب
             bot.sendMessage(chatId, analysis.choices[0].message.content);
         }
 
     } catch (error) {
         console.error("Error:", error);
-        bot.sendMessage(chatId, "❌ حدث خطأ تقني، حاول مرة أخرى.");
+        bot.sendMessage(chatId, "⚠️ حدث خطأ بسيط، حاول صياغة الجملة بشكل آخر.");
     }
 });
