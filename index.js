@@ -4,11 +4,9 @@ const axios = require('axios');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
 
 const app = express();
 
-// المتغيرات
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SHEET_SCRIPT_URL = process.env.SHEET_SCRIPT_URL;
@@ -20,11 +18,11 @@ if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
 }
 
 // =================================================================
-// 📊 نظام الداش بورد (Dashboard)
+// 📊 نظام الداش بورد (النسخة النظيفة - دخل/صرف/رصيد)
 // =================================================================
-
 const getDashboardHTML = (records) => {
     const safeRecords = JSON.stringify(records).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
     return `
     <!DOCTYPE html>
     <html lang="ar" dir="rtl">
@@ -48,7 +46,7 @@ const getDashboardHTML = (records) => {
         <div class="header-gradient text-center">
             <div class="container">
                 <h1>💰 الميزانية الشخصية</h1>
-                <div class="btn-group mt-3" role="group">
+                <div class="btn-group mt-3">
                     <button onclick="filterData('all')" class="btn btn-light active" id="btn-all">الكل</button>
                     <button onclick="filterData('month')" class="btn btn-outline-light" id="btn-month">هذا الشهر</button>
                 </div>
@@ -73,24 +71,36 @@ const getDashboardHTML = (records) => {
             const rawData = JSON.parse("${safeRecords}");
             let expenseChartInst = null; let ratioChartInst = null;
             const processedData = rawData.map(item => { const parts = item.date.split('/'); return { ...item, dateObj: new Date(parts[2], parts[1]-1, parts[0]) }; });
+            
             function filterData(type) {
                 document.getElementById('btn-all').className = 'btn btn-outline-light'; document.getElementById('btn-month').className = 'btn btn-outline-light'; document.getElementById('btn-'+type).className = 'btn btn-light active';
                 const now = new Date(); let filtered = processedData;
                 if(type === 'month') filtered = processedData.filter(d => d.dateObj.getMonth() === now.getMonth() && d.dateObj.getFullYear() === now.getFullYear());
                 updateUI(filtered);
             }
+
             function updateUI(data) {
                 let totalIncome = 0; let totalExpense = 0; const expenseCats = {};
-                data.forEach(i => { if (i.type === 'income') totalIncome += i.amount; else { totalExpense += i.amount; expenseCats[i.category] = (expenseCats[i.category] || 0) + i.amount; } });
-                const balance = totalIncome - totalExpense;
-                document.getElementById('incomeDisplay').innerText = totalIncome.toLocaleString() + ' ر.س';
-                document.getElementById('expenseDisplay').innerText = totalExpense.toLocaleString() + ' ر.س';
-                document.getElementById('balanceDisplay').innerText = balance.toLocaleString() + ' ر.س';
-                document.getElementById('transactionsTable').innerHTML = data.slice(-10).reverse().map(i => { const color = i.type === 'income' ? 'text-success' : 'text-danger'; const sign = i.type === 'income' ? '+' : '-'; return \`<tr><td>\${i.date}</td><td class="fw-bold">\${i.item}</td><td><span class="badge bg-secondary">\${i.category}</span></td><td class="\${color} fw-bold" dir="ltr">\${sign}\${i.amount}</td></tr>\`; }).join('');
+                data.forEach(i => { 
+                    if (i.type === 'income') totalIncome += i.amount; 
+                    else { totalExpense += i.amount; expenseCats[i.category] = (expenseCats[i.category] || 0) + i.amount; } 
+                });
+                
+                document.getElementById('incomeDisplay').innerText = totalIncome.toLocaleString();
+                document.getElementById('expenseDisplay').innerText = totalExpense.toLocaleString();
+                document.getElementById('balanceDisplay').innerText = (totalIncome - totalExpense).toLocaleString();
+                
+                document.getElementById('transactionsTable').innerHTML = data.slice(-10).reverse().map(i => { 
+                    const color = i.type === 'income' ? 'text-success' : 'text-danger'; 
+                    const sign = i.type === 'income' ? '+' : '-'; 
+                    return \`<tr><td>\${i.date}</td><td>\${i.item}</td><td><span class="badge bg-light text-dark border">\${i.category}</span></td><td class="\${color} fw-bold" dir="ltr">\${sign}\${i.amount}</td></tr>\`; 
+                }).join('');
+
                 if(expenseChartInst) expenseChartInst.destroy();
                 expenseChartInst = new Chart(document.getElementById('expenseChart'), { type: 'bar', data: { labels: Object.keys(expenseCats), datasets: [{ label: 'المبلغ', data: Object.values(expenseCats), backgroundColor: '#dc3545', borderRadius: 5 }] }, options: { indexAxis: 'y', maintainAspectRatio: false } });
+                
                 if(ratioChartInst) ratioChartInst.destroy();
-                ratioChartInst = new Chart(document.getElementById('ratioChart'), { type: 'doughnut', data: { labels: ['المصروفات', 'المتبقي'], datasets: [{ data: [totalExpense, Math.max(0, balance)], backgroundColor: ['#dc3545', '#198754'] }] }, options: { maintainAspectRatio: false } });
+                ratioChartInst = new Chart(document.getElementById('ratioChart'), { type: 'doughnut', data: { labels: ['المصروفات', 'المتبقي'], datasets: [{ data: [totalExpense, Math.max(0, totalIncome - totalExpense)], backgroundColor: ['#dc3545', '#198754'] }] }, options: { maintainAspectRatio: false } });
             }
             filterData('all');
         </script>
@@ -108,16 +118,21 @@ app.get('/', async (req, res) => {
 app.listen(3000, () => console.log(`Server started`));
 
 // =================================================================
-// 🤖 البوت الذكي (صوت + نص)
+// 🤖 البوت الذكي (مع ميزة طلب الرابط)
 // =================================================================
-
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 let pendingTransaction = null; 
 
-// دالة لمعالجة النصوص (سواء جاءت من كتابة أو من صوت)
 async function processUserText(chatId, text) {
-    // 1. تحديد النية (تسجيل أم قراءة)
+    // 🔗 1. التحقق السريع: هل يطلب المستخدم الرابط؟
+    const linkKeywords = ['رابط', 'موقع', 'داش بورد', 'dashboard', 'link', 'site', 'الرابط'];
+    if (linkKeywords.some(keyword => text.toLowerCase().includes(keyword))) {
+        bot.sendMessage(chatId, " تفضل، هذا رابط لوحة التحكم الخاصة بك:\nhttps://jwad.onrender.com/");
+        return; // توقف هنا، لا داعي لإزعاج OpenAI
+    }
+
+    // 2. إذا لم يكن يطلب الرابط، نكمل المعالجة بـ AI
     const intentCheck = await openai.chat.completions.create({
         messages: [
             { role: "system", content: `Classify intent: "write" (add income/expense) OR "read" (query balance/history). Return JSON: {"type": "write"} OR {"type": "read"}` },
@@ -132,15 +147,12 @@ async function processUserText(chatId, text) {
             messages: [
                 { 
                     role: "system", 
-                    content: `Extract data: {"item": string, "amount": number, "category": string, "type": "income" | "expense"}.
-                    
-                    STEP 1: TYPE. "راتب/دخل/تحويل لي" -> income. "شريت/دفعت/صرفت" -> expense.
-                    
-                    STEP 2: CATEGORY.
-                    [Expense]: "السكن", "الفواتير الخدمية", "الاتصالات والإنترنت", "التعليم", "العمالة المنزلية", "الأقساط البنكية", "السوبر ماركت", "النقل والمواصلات", "الصحة", "مستلزمات الأطفال", "المطاعم والكافيهات", "الترفيه", "العناية الشخصية", "الواجبات الاجتماعية", "الادخار للطوارئ".
-                    [Income]: "الراتب الشهري", "دخل إضافي", "عيدية/هدايا", "استرداد مبلغ".
-
-                    STEP 3: Ambiguity. If unsure (e.g. "Transfer 500"), category="ASK_USER", type="expense".
+                    content: `Extract: {"item":string, "amount":number, "category":string, "type":"income"|"expense"}.
+                    TYPE: "راتب/دخل"->income. "شريت/دفعت/صرفت"->expense.
+                    CATEGORIES:
+                    [Expense]: "السكن", "الفواتير الخدمية", "الاتصالات والإنترنت", "التعليم", "العمالة المنزلية", "الأقساط البنكية", "السوبر ماركت", "النقل والمواصلات", "الصحة", "مستلزمات الأطفال", "المطاعم والكافيهات", "الترفيه", "العناية الشخصية", "الواجبات الاجتماعية", "الادخار للطوارئ", "الاستثمار".
+                    [Income]: "الراتب الشهري", "دخل إضافي", "عيدية/هدايا".
+                    AMBIGUITY: If unsure (e.g. "Transfer 500"), category="ASK_USER".
                     Return JSON.` 
                 },
                 { role: "user", content: text }
@@ -152,12 +164,8 @@ async function processUserText(chatId, text) {
 
         if (data.category === "ASK_USER") {
             pendingTransaction = { item: data.item, amount: data.amount, raw_text: text, type: data.type };
-            bot.sendMessage(chatId, `❓ *توضيح مطلوب:* ما تصنيف "${data.item}" (${data.amount})؟`, { 
-                parse_mode: 'Markdown',
-                reply_markup: {
-                    keyboard: [["السوبر ماركت", "المطاعم والكافيهات"], ["الراتب الشهري", "دخل إضافي"], ["النقل والمواصلات", "الفواتير"], ["إلغاء"]],
-                    one_time_keyboard: true, resize_keyboard: true
-                }
+            bot.sendMessage(chatId, `❓ ما تصنيف "${data.item}" (${data.amount})؟`, { 
+                reply_markup: { keyboard: [["السوبر ماركت", "المطاعم والكافيهات"], ["الراتب الشهري", "دخل إضافي"], ["النقل والمواصلات", "الفواتير"], ["إلغاء"]], one_time_keyboard: true, resize_keyboard: true }
             });
             return;
         }
@@ -167,17 +175,10 @@ async function processUserText(chatId, text) {
         bot.sendMessage(chatId, `✅ *تم التقييد:* ${data.item} (${data.amount} ريال)\n🏷️ ${data.category} ${emoji}`, { parse_mode: 'Markdown' });
 
     } else {
-        // قراءة
         const sheetResponse = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
-        const records = sheetResponse.data.records || [];
-        
-        let totalIncome = 0; let totalExpense = 0;
-        records.forEach(r => { if(r.type === 'income') totalIncome += r.amount; else totalExpense += r.amount; });
-        const balance = totalIncome - totalExpense;
-
         const analysis = await openai.chat.completions.create({
             messages: [
-                { role: "system", content: `Financial accountant. Income=${totalIncome}, Expense=${totalExpense}, Balance=${balance}. Records=${JSON.stringify(records.slice(-15))}. Answer in Arabic.` },
+                { role: "system", content: `Financial advisor. Data=${JSON.stringify(sheetResponse.data.records.slice(-15))}. Answer in Arabic.` },
                 { role: "user", content: text }
             ],
             model: "gpt-3.5-turbo",
@@ -186,18 +187,15 @@ async function processUserText(chatId, text) {
     }
 }
 
-// استقبال الرسائل (نص أو صوت)
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id.toString();
-
     if (ALLOWED_USER_ID && userId !== ALLOWED_USER_ID) return;
 
-    // 1. معالجة العمليات المعلقة (نصوص فقط)
     if (pendingTransaction && msg.text) {
         const chosenCategory = msg.text.trim();
         const finalData = { ...pendingTransaction, category: chosenCategory };
-        bot.sendMessage(chatId, `🔄 تم اعتماد: ${chosenCategory}`);
+        bot.sendMessage(chatId, `🔄 تم الاعتماد: ${chosenCategory}`);
         try {
             await axios.post(SHEET_SCRIPT_URL, finalData);
             const emoji = finalData.type === 'income' ? '💰' : '💸';
@@ -208,57 +206,26 @@ bot.on('message', async (msg) => {
     }
 
     bot.sendChatAction(chatId, 'typing');
-
     try {
         let textToProcess = "";
-
-        // أ) إذا كانت الرسالة صوتية 🎤
         if (msg.voice) {
-            bot.sendMessage(chatId, "🎤 جاري سماع التسجيل وتحويله لنص...");
-            
-            const fileId = msg.voice.file_id;
-            const fileLink = await bot.getFileLink(fileId);
-            
-            // تحميل الملف مؤقتاً
-            const tempFilePath = path.join(__dirname, 'voice_temp.ogg');
+            const fileLink = await bot.getFileLink(msg.voice.file_id);
+            const tempFilePath = path.join(__dirname, `voice_${msg.voice.file_id}.ogg`);
             const writer = fs.createWriteStream(tempFilePath);
-            
             const response = await axios({ url: fileLink, method: 'GET', responseType: 'stream' });
             response.data.pipe(writer);
-
-            await new Promise((resolve, reject) => {
-                writer.on('finish', resolve);
-                writer.on('error', reject);
-            });
-
-            // إرسال الملف لـ Whisper
-            const transcription = await openai.audio.transcriptions.create({
-                file: fs.createReadStream(tempFilePath),
-                model: "whisper-1",
-                language: "ar" // تحديد اللغة العربية لدقة أعلى
-            });
-
-            textToProcess = transcription.text;
-            bot.sendMessage(chatId, `🗣️ *سمعتك تقول:* "${textToProcess}"`, { parse_mode: 'Markdown' });
+            await new Promise((resolve, reject) => { writer.on('finish', resolve); writer.on('error', reject); });
             
-            // حذف الملف المؤقت
+            const transcription = await openai.audio.transcriptions.create({ file: fs.createReadStream(tempFilePath), model: "whisper-1", language: "ar" });
+            textToProcess = transcription.text;
+            bot.sendMessage(chatId, `🗣️ *النص:* "${textToProcess}"`, { parse_mode: 'Markdown' });
             fs.unlinkSync(tempFilePath);
-
-        } 
-        // ب) إذا كانت الرسالة نصية 📝
-        else if (msg.text) {
+        } else if (msg.text) {
             textToProcess = msg.text;
-        } else {
-            return;
         }
 
-        // إرسال النص للمعالجة
-        if (textToProcess) {
-            await processUserText(chatId, textToProcess);
-        }
-
+        if (textToProcess) await processUserText(chatId, textToProcess);
     } catch (error) {
-        console.error(error);
-        bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء المعالجة (قد يكون الملف الصوتي طويلاً جداً).");
+        bot.sendMessage(chatId, `⚠️ خطأ: ${error.message}`);
     }
 });
