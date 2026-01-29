@@ -20,21 +20,15 @@ if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
 // ⏰ 1. التقرير اليومي (الساعة 6 صباحاً بتوقيت الرياض)
 // =================================================================
 cron.schedule('0 6 * * *', async () => {
-    console.log('⏰ Sending daily report...');
     if (!ALLOWED_USER_ID) return;
-
     try {
         const sheetRes = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
         const totals = sheetRes.data.totals;
-
         const reportMsg = `☀️ *صباح الخير! تقريرك المالي:*
-
 📥 *الدخل:* ${totals.income.toLocaleString()} ريال
 📤 *المصروف:* ${totals.expense.toLocaleString()} ريال
 💎 *الرصيد:* ${totals.balance.toLocaleString()} ريال
-
 يوماً موفقاً! 🌹`;
-
         bot.sendMessage(ALLOWED_USER_ID, reportMsg, { parse_mode: "Markdown" });
     } catch (error) {
         console.error('❌ Error daily report:', error.message);
@@ -42,40 +36,157 @@ cron.schedule('0 6 * * *', async () => {
 }, { timezone: "Asia/Riyadh" });
 
 // =================================================================
-// 📊 2. الداش بورد
+// 📊 2. الداش بورد (النسخة الاحترافية مع الرسوم البيانية)
 // =================================================================
 const getDashboardHTML = (totals, records) => {
+    // تجهيز البيانات للجافاسكربت
     const safeRecords = JSON.stringify(records).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    return `<!DOCTYPE html>
+    
+    return `
+    <!DOCTYPE html>
     <html lang="ar" dir="rtl">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>الميزانية الشخصية</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        <style>body{font-family:'Segoe UI',Tahoma,sans-serif;background:#f8f9fa;padding:20px}.card{margin-bottom:20px;border:none;box-shadow:0 2px 4px rgba(0,0,0,0.1)}.val{font-size:1.5rem;font-weight:bold}</style>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;800&display=swap" rel="stylesheet">
+        
+        <style>
+            body { font-family: 'Tajawal', sans-serif; background-color: #f0f2f5; padding-bottom: 50px; }
+            .header-gradient { background: linear-gradient(135deg, #1e3c72, #2a5298); color: white; padding: 2rem 0; border-radius: 0 0 25px 25px; margin-bottom: 2rem; }
+            .card { border: none; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); transition: transform 0.2s; }
+            .card:hover { transform: translateY(-5px); }
+            .metric-value { font-size: 2rem; font-weight: 800; }
+            .text-income { color: #198754; } .text-expense { color: #dc3545; } .text-balance { color: #0d6efd; }
+            .chart-container { position: relative; height: 300px; width: 100%; }
+        </style>
     </head>
     <body>
-        <div class="container">
-            <h2 class="text-center mb-4">لوحة التحكم المالية</h2>
-            <div class="row text-center">
-                <div class="col-md-4"><div class="card p-3"><div class="text-success">الدخل</div><div class="val">${totals.income.toLocaleString()}</div></div></div>
-                <div class="col-md-4"><div class="card p-3"><div class="text-danger">المصروف</div><div class="val">${totals.expense.toLocaleString()}</div></div></div>
-                <div class="col-md-4"><div class="card p-3"><div class="text-primary">الرصيد</div><div class="val">${totals.balance.toLocaleString()}</div></div></div>
-            </div>
-            <div class="card p-3">
-                <h5>آخر العمليات</h5>
-                <table class="table table-striped">
-                    <thead><tr><th>التاريخ</th><th>البند</th><th>التصنيف</th><th>المبلغ</th></tr></thead>
-                    <tbody id="tableBody"></tbody>
-                </table>
+        <div class="header-gradient text-center">
+            <div class="container">
+                <h1>📊 لوحة التحكم المالية</h1>
+                <p class="opacity-75">نظرة شاملة على مصاريفك ودخلك</p>
             </div>
         </div>
+
+        <div class="container">
+            <div class="row g-3 mb-4">
+                <div class="col-md-4">
+                    <div class="card p-4 text-center">
+                        <span class="text-muted small">إجمالي الدخل</span>
+                        <div class="metric-value text-income">${totals.income.toLocaleString()} <small style="font-size:1rem">ريال</small></div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-4 text-center">
+                        <span class="text-muted small">إجمالي المصروفات</span>
+                        <div class="metric-value text-expense">${totals.expense.toLocaleString()} <small style="font-size:1rem">ريال</small></div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-4 text-center">
+                        <span class="text-muted small">الرصيد المتبقي</span>
+                        <div class="metric-value text-balance">${totals.balance.toLocaleString()} <small style="font-size:1rem">ريال</small></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-4">
+                <div class="col-md-8">
+                    <div class="card p-4">
+                        <h5 class="mb-3">توزيع المصاريف (حسب الفئة)</h5>
+                        <div class="chart-container">
+                            <canvas id="categoryChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-4">
+                        <h5 class="mb-3">نسبة الصرف</h5>
+                        <div class="chart-container">
+                            <canvas id="ratioChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card p-4">
+                <h5 class="mb-3">📝 آخر العمليات المسجلة</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-light">
+                            <tr><th>التاريخ</th><th>البند</th><th>التصنيف</th><th>المبلغ</th></tr>
+                        </thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <script>
-            const data = JSON.parse('${safeRecords}');
-            document.getElementById('tableBody').innerHTML = data.slice(-10).reverse().map(i => 
-                \`<tr><td>\${i.date}</td><td>\${i.item}</td><td>\${i.category}</td><td style="color:\${i.type==='income'?'green':'red'}">\${i.amount}</td></tr>\`
-            ).join('');
+            // استلام البيانات
+            const records = JSON.parse('${safeRecords}');
+            const totals = { income: ${totals.income}, expense: ${totals.expense} };
+
+            // 1. تعبئة الجدول
+            document.getElementById('tableBody').innerHTML = records.slice(-10).reverse().map(i => {
+                const color = i.type === 'income' ? 'text-success' : 'text-danger';
+                const sign = i.type === 'income' ? '+' : '-';
+                return \`<tr>
+                    <td>\${i.date}</td>
+                    <td class="fw-bold">\${i.item}</td>
+                    <td><span class="badge bg-secondary">\${i.category}</span></td>
+                    <td class="\${color} fw-bold" dir="ltr">\${sign}\${i.amount}</td>
+                </tr>\`;
+            }).join('');
+
+            // 2. تجهيز بيانات الرسم البياني (تجميع المصاريف حسب الفئة)
+            const categories = {};
+            records.forEach(r => {
+                if (r.type === 'expense') {
+                    categories[r.category] = (categories[r.category] || 0) + r.amount;
+                }
+            });
+
+            // 3. رسم الشارت الدائري (توزيع المصاريف)
+            new Chart(document.getElementById('categoryChart'), {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(categories),
+                    datasets: [{
+                        label: 'المصروف',
+                        data: Object.values(categories),
+                        backgroundColor: '#3498db',
+                        borderRadius: 5
+                    }]
+                },
+                options: { 
+                    indexAxis: 'y', 
+                    responsive: true, 
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } }
+                }
+            });
+
+            // 4. رسم شارت الدونات (دخل vs صرف)
+            new Chart(document.getElementById('ratioChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['المتبقي', 'المصروف'],
+                    datasets: [{
+                        data: [Math.max(0, totals.income - totals.expense), totals.expense],
+                        backgroundColor: ['#2ecc71', '#e74c3c'],
+                        borderWidth: 0
+                    }]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false,
+                    cutout: '70%'
+                }
+            });
         </script>
     </body>
     </html>`;
@@ -90,7 +201,7 @@ app.get('/', async (req, res) => {
 app.listen(3000, () => console.log(`Server started`));
 
 // =================================================================
-// 🤖 3. البوت الذكي (الكامل)
+// 🤖 3. البوت الذكي (كامل المزايا)
 // =================================================================
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -186,7 +297,7 @@ bot.on('message', async (msg) => {
         else if (intent === "read") {
             const sheetRes = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
             const totals = sheetRes.data.totals;
-            bot.sendMessage(chatId, `📊 *الملخص:*\n📥 الدخل: ${totals.income}\n📤 المصروف: ${totals.expense}\n💎 الرصيد: ${totals.balance}`, { parse_mode: "Markdown" });
+            bot.sendMessage(chatId, `📊 *الملخص:*\n📥 الدخل: ${totals.income.toLocaleString()}\n📤 المصروف: ${totals.expense.toLocaleString()}\n💎 الرصيد: ${totals.balance.toLocaleString()}`, { parse_mode: "Markdown" });
         }
     } catch (error) {
         bot.sendMessage(chatId, "⚠️ لم أفهم، حاول مرة أخرى.");
