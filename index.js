@@ -2,8 +2,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const { OpenAI } = require('openai');
 const axios = require('axios');
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
+const cron = require('node-cron'); 
 
 const app = express();
 
@@ -18,214 +17,178 @@ if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
 }
 
 // =================================================================
-// 📊 نظام الداش بورد (النسخة النظيفة - دخل/صرف/رصيد)
+// ⏰ 1. التقرير اليومي (الساعة 6 صباحاً بتوقيت الرياض)
 // =================================================================
-const getDashboardHTML = (records) => {
-    const safeRecords = JSON.stringify(records).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+cron.schedule('0 6 * * *', async () => {
+    console.log('⏰ Sending daily report...');
+    if (!ALLOWED_USER_ID) return;
 
-    return `
-    <!DOCTYPE html>
+    try {
+        const sheetRes = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
+        const totals = sheetRes.data.totals;
+
+        const reportMsg = `☀️ *صباح الخير! تقريرك المالي:*
+
+📥 *الدخل:* ${totals.income.toLocaleString()} ريال
+📤 *المصروف:* ${totals.expense.toLocaleString()} ريال
+💎 *الرصيد:* ${totals.balance.toLocaleString()} ريال
+
+يوماً موفقاً! 🌹`;
+
+        bot.sendMessage(ALLOWED_USER_ID, reportMsg, { parse_mode: "Markdown" });
+    } catch (error) {
+        console.error('❌ Error daily report:', error.message);
+    }
+}, { timezone: "Asia/Riyadh" });
+
+// =================================================================
+// 📊 2. الداش بورد
+// =================================================================
+const getDashboardHTML = (totals, records) => {
+    const safeRecords = JSON.stringify(records).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `<!DOCTYPE html>
     <html lang="ar" dir="rtl">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>الميزانية الشخصية 💰</title>
+        <title>الميزانية الشخصية</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;800&display=swap" rel="stylesheet">
-        <style>
-            body { font-family: 'Tajawal', sans-serif; background-color: #f0f2f5; }
-            .header-gradient { background: linear-gradient(135deg, #134E5E, #71B280); color: white; padding: 2rem 0; border-radius: 0 0 25px 25px; margin-bottom: 2rem; }
-            .card { border: none; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-            .balance-card { background: #fff; border-right: 5px solid; }
-            .metric-value { font-size: 1.8rem; font-weight: 800; }
-            .text-income { color: #198754; } .text-expense { color: #dc3545; } .text-balance { color: #0d6efd; }
-        </style>
+        <style>body{font-family:'Segoe UI',Tahoma,sans-serif;background:#f8f9fa;padding:20px}.card{margin-bottom:20px;border:none;box-shadow:0 2px 4px rgba(0,0,0,0.1)}.val{font-size:1.5rem;font-weight:bold}</style>
     </head>
     <body>
-        <div class="header-gradient text-center">
-            <div class="container">
-                <h1>💰 الميزانية الشخصية</h1>
-                <div class="btn-group mt-3">
-                    <button onclick="filterData('all')" class="btn btn-light active" id="btn-all">الكل</button>
-                    <button onclick="filterData('month')" class="btn btn-outline-light" id="btn-month">هذا الشهر</button>
-                </div>
-            </div>
-        </div>
-        <div class="container mb-5">
-            <div class="row g-3 mb-4">
-                <div class="col-md-4"><div class="card p-4 balance-card" style="border-color: #198754;"><span>📥 الدخل</span><div class="metric-value text-income" id="incomeDisplay">0</div></div></div>
-                <div class="col-md-4"><div class="card p-4 balance-card" style="border-color: #dc3545;"><span>📤 المصروفات</span><div class="metric-value text-expense" id="expenseDisplay">0</div></div></div>
-                <div class="col-md-4"><div class="card p-4 balance-card" style="border-color: #0d6efd;"><span>💎 الرصيد</span><div class="metric-value text-balance" id="balanceDisplay">0</div></div></div>
-            </div>
-            <div class="row g-3 mb-4">
-                <div class="col-md-8"><div class="card p-3"><h5>تحليل المصروفات</h5><div style="height: 300px;"><canvas id="expenseChart"></canvas></div></div></div>
-                <div class="col-md-4"><div class="card p-3"><h5>نسبة الصرف</h5><div style="height: 300px;"><canvas id="ratioChart"></canvas></div></div></div>
+        <div class="container">
+            <h2 class="text-center mb-4">لوحة التحكم المالية</h2>
+            <div class="row text-center">
+                <div class="col-md-4"><div class="card p-3"><div class="text-success">الدخل</div><div class="val">${totals.income.toLocaleString()}</div></div></div>
+                <div class="col-md-4"><div class="card p-3"><div class="text-danger">المصروف</div><div class="val">${totals.expense.toLocaleString()}</div></div></div>
+                <div class="col-md-4"><div class="card p-3"><div class="text-primary">الرصيد</div><div class="val">${totals.balance.toLocaleString()}</div></div></div>
             </div>
             <div class="card p-3">
-                <h5>📝 سجل العمليات</h5>
-                <div class="table-responsive"><table class="table table-hover align-middle"><thead class="table-light"><tr><th>التاريخ</th><th>البند</th><th>التصنيف</th><th>المبلغ</th></tr></thead><tbody id="transactionsTable"></tbody></table></div>
+                <h5>آخر العمليات</h5>
+                <table class="table table-striped">
+                    <thead><tr><th>التاريخ</th><th>البند</th><th>التصنيف</th><th>المبلغ</th></tr></thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
             </div>
         </div>
         <script>
-            const rawData = JSON.parse("${safeRecords}");
-            let expenseChartInst = null; let ratioChartInst = null;
-            const processedData = rawData.map(item => { const parts = item.date.split('/'); return { ...item, dateObj: new Date(parts[2], parts[1]-1, parts[0]) }; });
-            
-            function filterData(type) {
-                document.getElementById('btn-all').className = 'btn btn-outline-light'; document.getElementById('btn-month').className = 'btn btn-outline-light'; document.getElementById('btn-'+type).className = 'btn btn-light active';
-                const now = new Date(); let filtered = processedData;
-                if(type === 'month') filtered = processedData.filter(d => d.dateObj.getMonth() === now.getMonth() && d.dateObj.getFullYear() === now.getFullYear());
-                updateUI(filtered);
-            }
-
-            function updateUI(data) {
-                let totalIncome = 0; let totalExpense = 0; const expenseCats = {};
-                data.forEach(i => { 
-                    if (i.type === 'income') totalIncome += i.amount; 
-                    else { totalExpense += i.amount; expenseCats[i.category] = (expenseCats[i.category] || 0) + i.amount; } 
-                });
-                
-                document.getElementById('incomeDisplay').innerText = totalIncome.toLocaleString();
-                document.getElementById('expenseDisplay').innerText = totalExpense.toLocaleString();
-                document.getElementById('balanceDisplay').innerText = (totalIncome - totalExpense).toLocaleString();
-                
-                document.getElementById('transactionsTable').innerHTML = data.slice(-10).reverse().map(i => { 
-                    const color = i.type === 'income' ? 'text-success' : 'text-danger'; 
-                    const sign = i.type === 'income' ? '+' : '-'; 
-                    return \`<tr><td>\${i.date}</td><td>\${i.item}</td><td><span class="badge bg-light text-dark border">\${i.category}</span></td><td class="\${color} fw-bold" dir="ltr">\${sign}\${i.amount}</td></tr>\`; 
-                }).join('');
-
-                if(expenseChartInst) expenseChartInst.destroy();
-                expenseChartInst = new Chart(document.getElementById('expenseChart'), { type: 'bar', data: { labels: Object.keys(expenseCats), datasets: [{ label: 'المبلغ', data: Object.values(expenseCats), backgroundColor: '#dc3545', borderRadius: 5 }] }, options: { indexAxis: 'y', maintainAspectRatio: false } });
-                
-                if(ratioChartInst) ratioChartInst.destroy();
-                ratioChartInst = new Chart(document.getElementById('ratioChart'), { type: 'doughnut', data: { labels: ['المصروفات', 'المتبقي'], datasets: [{ data: [totalExpense, Math.max(0, totalIncome - totalExpense)], backgroundColor: ['#dc3545', '#198754'] }] }, options: { maintainAspectRatio: false } });
-            }
-            filterData('all');
+            const data = JSON.parse('${safeRecords}');
+            document.getElementById('tableBody').innerHTML = data.slice(-10).reverse().map(i => 
+                \`<tr><td>\${i.date}</td><td>\${i.item}</td><td>\${i.category}</td><td style="color:\${i.type==='income'?'green':'red'}">\${i.amount}</td></tr>\`
+            ).join('');
         </script>
     </body>
-    </html>
-    `;
+    </html>`;
 };
 
 app.get('/', async (req, res) => {
     try {
         const response = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
-        res.send(getDashboardHTML(response.data.records || []));
-    } catch (error) { res.send(`Error: ${error.message}`); }
+        res.send(getDashboardHTML(response.data.totals, response.data.records));
+    } catch (error) { res.send(error.message); }
 });
 app.listen(3000, () => console.log(`Server started`));
 
 // =================================================================
-// 🤖 البوت الذكي (مع ميزة طلب الرابط)
+// 🤖 3. البوت الذكي (الكامل)
 // =================================================================
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 let pendingTransaction = null; 
 
-async function processUserText(chatId, text) {
-    // 🔗 1. التحقق السريع: هل يطلب المستخدم الرابط؟
-    const linkKeywords = ['رابط', 'موقع', 'داش بورد', 'dashboard', 'link', 'site', 'الرابط'];
-    if (linkKeywords.some(keyword => text.toLowerCase().includes(keyword))) {
-        bot.sendMessage(chatId, " تفضل، هذا رابط لوحة التحكم الخاصة بك:\nhttps://jwad.onrender.com/");
-        return; // توقف هنا، لا داعي لإزعاج OpenAI
-    }
-
-    // 2. إذا لم يكن يطلب الرابط، نكمل المعالجة بـ AI
-    const intentCheck = await openai.chat.completions.create({
-        messages: [
-            { role: "system", content: `Classify intent: "write" (add income/expense) OR "read" (query balance/history). Return JSON: {"type": "write"} OR {"type": "read"}` },
-            { role: "user", content: text }
-        ],
-        model: "gpt-3.5-turbo",
-    });
-    const intent = JSON.parse(intentCheck.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim()).type;
-
-    if (intent === "write") {
-        const extraction = await openai.chat.completions.create({
-            messages: [
-                { 
-                    role: "system", 
-                    content: `Extract: {"item":string, "amount":number, "category":string, "type":"income"|"expense"}.
-                    TYPE: "راتب/دخل"->income. "شريت/دفعت/صرفت"->expense.
-                    CATEGORIES:
-                    [Expense]: "السكن", "الفواتير الخدمية", "الاتصالات والإنترنت", "التعليم", "العمالة المنزلية", "الأقساط البنكية", "السوبر ماركت", "النقل والمواصلات", "الصحة", "مستلزمات الأطفال", "المطاعم والكافيهات", "الترفيه", "العناية الشخصية", "الواجبات الاجتماعية", "الادخار للطوارئ", "الاستثمار".
-                    [Income]: "الراتب الشهري", "دخل إضافي", "عيدية/هدايا".
-                    AMBIGUITY: If unsure (e.g. "Transfer 500"), category="ASK_USER".
-                    Return JSON.` 
-                },
-                { role: "user", content: text }
-            ],
-            model: "gpt-3.5-turbo",
-        });
-        const data = JSON.parse(extraction.choices[0].message.content.replace(/```json/g, '').replace(/```/g, '').trim());
-        data.raw_text = text;
-
-        if (data.category === "ASK_USER") {
-            pendingTransaction = { item: data.item, amount: data.amount, raw_text: text, type: data.type };
-            bot.sendMessage(chatId, `❓ ما تصنيف "${data.item}" (${data.amount})؟`, { 
-                reply_markup: { keyboard: [["السوبر ماركت", "المطاعم والكافيهات"], ["الراتب الشهري", "دخل إضافي"], ["النقل والمواصلات", "الفواتير"], ["إلغاء"]], one_time_keyboard: true, resize_keyboard: true }
-            });
-            return;
-        }
-
-        await axios.post(SHEET_SCRIPT_URL, data);
-        const emoji = data.type === 'income' ? '💰' : '💸';
-        bot.sendMessage(chatId, `✅ *تم التقييد:* ${data.item} (${data.amount} ريال)\n🏷️ ${data.category} ${emoji}`, { parse_mode: 'Markdown' });
-
-    } else {
-        const sheetResponse = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
-        const analysis = await openai.chat.completions.create({
-            messages: [
-                { role: "system", content: `Financial advisor. Data=${JSON.stringify(sheetResponse.data.records.slice(-15))}. Answer in Arabic.` },
-                { role: "user", content: text }
-            ],
-            model: "gpt-3.5-turbo",
-        });
-        bot.sendMessage(chatId, analysis.choices[0].message.content);
-    }
-}
+const EXPENSE_CATEGORIES = [["السوبر ماركت", "المطاعم والكافيهات"], ["النقل والمواصلات", "الفواتير الخدمية"], ["مستلزمات الأطفال", "الصحة"], ["التعليم", "العناية الشخصية"], ["الترفيه", "الواجبات الاجتماعية"], ["السكن", "أقساط بنكية"]];
+const INCOME_CATEGORIES = [["الراتب الشهري", "دخل إضافي"], ["عيدية/هدايا", "استرداد مبلغ"]];
 
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
+    const text = msg.text;
     const userId = msg.from.id.toString();
-    if (ALLOWED_USER_ID && userId !== ALLOWED_USER_ID) return;
 
-    if (pendingTransaction && msg.text) {
-        const chosenCategory = msg.text.trim();
-        const finalData = { ...pendingTransaction, category: chosenCategory };
-        bot.sendMessage(chatId, `🔄 تم الاعتماد: ${chosenCategory}`);
-        try {
-            await axios.post(SHEET_SCRIPT_URL, finalData);
-            const emoji = finalData.type === 'income' ? '💰' : '💸';
-            bot.sendMessage(chatId, `✅ *تم التقييد:* ${finalData.item} (${finalData.amount}) - ${finalData.category} ${emoji}`, { parse_mode: 'Markdown' });
+    if (ALLOWED_USER_ID && userId !== ALLOWED_USER_ID) return;
+    if (!text) return;
+
+    // 🛑 معالجة التأكيد
+    if (pendingTransaction) {
+        if (text === "✅ نعم، اعتمد") {
+            try {
+                await axios.post(SHEET_SCRIPT_URL, pendingTransaction);
+                const emoji = pendingTransaction.type === 'income' ? '💰' : '💸';
+                bot.sendMessage(chatId, `✅ تم الحفظ: ${pendingTransaction.item} (${pendingTransaction.amount}) - ${pendingTransaction.category} ${emoji}`, { reply_markup: { remove_keyboard: true } });
+                pendingTransaction = null;
+            } catch (e) { bot.sendMessage(chatId, "❌ خطأ في الحفظ."); }
+            return;
+        }
+        if (text === "❌ لا، إلغاء") {
+            bot.sendMessage(chatId, "❌ تم الإلغاء.", { reply_markup: { remove_keyboard: true } });
             pendingTransaction = null;
-        } catch (e) { bot.sendMessage(chatId, "❌ خطأ."); }
+            return;
+        }
+        if (text === "🔄 تغيير البند") {
+            const cats = pendingTransaction.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+            bot.sendMessage(chatId, "اختر البند:", { reply_markup: { keyboard: [...cats, ["❌ إلغاء"]], one_time_keyboard: true, resize_keyboard: true } });
+            pendingTransaction.status = "waiting_category";
+            return;
+        }
+        if (pendingTransaction.status === "waiting_category") {
+            if (text === "❌ إلغاء") {
+                bot.sendMessage(chatId, "❌ تم الإلغاء.", { reply_markup: { remove_keyboard: true } });
+                pendingTransaction = null;
+                return;
+            }
+            pendingTransaction.category = text;
+            pendingTransaction.status = "ready";
+            bot.sendMessage(chatId, `هل تعتمد: ( *${pendingTransaction.item}* ) بـ ( *${pendingTransaction.amount}* ) في ( *${pendingTransaction.category}* )؟`, { parse_mode: "Markdown", reply_markup: { keyboard: [["✅ نعم، اعتمد"], ["❌ لا، إلغاء"], ["🔄 تغيير البند"]], one_time_keyboard: true, resize_keyboard: true } });
+            return;
+        }
+    }
+
+    // 🔗 طلب الرابط
+    if (['رابط', 'موقع', 'داش بورد'].some(k => text.includes(k))) {
+        bot.sendMessage(chatId, "https://jwad.onrender.com/");
         return;
     }
 
     bot.sendChatAction(chatId, 'typing');
+
     try {
-        let textToProcess = "";
-        if (msg.voice) {
-            const fileLink = await bot.getFileLink(msg.voice.file_id);
-            const tempFilePath = path.join(__dirname, `voice_${msg.voice.file_id}.ogg`);
-            const writer = fs.createWriteStream(tempFilePath);
-            const response = await axios({ url: fileLink, method: 'GET', responseType: 'stream' });
-            response.data.pipe(writer);
-            await new Promise((resolve, reject) => { writer.on('finish', resolve); writer.on('error', reject); });
-            
-            const transcription = await openai.audio.transcriptions.create({ file: fs.createReadStream(tempFilePath), model: "whisper-1", language: "ar" });
-            textToProcess = transcription.text;
-            bot.sendMessage(chatId, `🗣️ *النص:* "${textToProcess}"`, { parse_mode: 'Markdown' });
-            fs.unlinkSync(tempFilePath);
-        } else if (msg.text) {
-            textToProcess = msg.text;
+        const intentRes = await openai.chat.completions.create({
+            messages: [
+                { role: "system", content: `Classify intent JSON {"type":...}: "write" (record money), "read" (ask totals), "chat" (greeting/chat).` },
+                { role: "user", content: text }
+            ],
+            model: "gpt-3.5-turbo"
+        });
+        const intent = JSON.parse(intentRes.choices[0].message.content.match(/{.*}/s)[0]).type;
+
+        if (intent === "chat") {
+            const chatRes = await openai.chat.completions.create({
+                messages: [{ role: "system", content: "Friendly assistant. Reply in Arabic." }, { role: "user", content: text }],
+                model: "gpt-3.5-turbo"
+            });
+            bot.sendMessage(chatId, chatRes.choices[0].message.content);
+            return;
         }
 
-        if (textToProcess) await processUserText(chatId, textToProcess);
+        if (intent === "write") {
+            const extractRes = await openai.chat.completions.create({
+                messages: [
+                    { role: "system", content: `Extract JSON {"item": string, "amount": number, "category": string, "type": "income"|"expense"}. Default categories: [Expense]: السوبر ماركت... [Income]: الراتب...` },
+                    { role: "user", content: text }
+                ],
+                model: "gpt-3.5-turbo"
+            });
+            const data = JSON.parse(extractRes.choices[0].message.content.match(/{.*}/s)[0]);
+            data.raw_text = text;
+            pendingTransaction = data;
+            pendingTransaction.status = "ready";
+            bot.sendMessage(chatId, `هل تعتمد: ( *${data.item}* ) بـ ( *${data.amount}* ) في ( *${data.category}* )؟`, { parse_mode: "Markdown", reply_markup: { keyboard: [["✅ نعم، اعتمد"], ["❌ لا، إلغاء"], ["🔄 تغيير البند"]], one_time_keyboard: true, resize_keyboard: true } });
+        } 
+        else if (intent === "read") {
+            const sheetRes = await axios.post(SHEET_SCRIPT_URL, { action: "get_data" });
+            const totals = sheetRes.data.totals;
+            bot.sendMessage(chatId, `📊 *الملخص:*\n📥 الدخل: ${totals.income}\n📤 المصروف: ${totals.expense}\n💎 الرصيد: ${totals.balance}`, { parse_mode: "Markdown" });
+        }
     } catch (error) {
-        bot.sendMessage(chatId, `⚠️ خطأ: ${error.message}`);
+        bot.sendMessage(chatId, "⚠️ لم أفهم، حاول مرة أخرى.");
     }
 });
