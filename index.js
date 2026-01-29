@@ -17,7 +17,7 @@ if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !SHEET_SCRIPT_URL) {
 }
 
 // =================================================================
-// ⏰ 1. التقرير اليومي (الساعة 6 صباحاً بتوقيت الرياض)
+// ⏰ 1. التقرير اليومي
 // =================================================================
 cron.schedule('0 6 * * *', async () => {
     if (!ALLOWED_USER_ID) return;
@@ -36,10 +36,9 @@ cron.schedule('0 6 * * *', async () => {
 }, { timezone: "Asia/Riyadh" });
 
 // =================================================================
-// 📊 2. الداش بورد (النسخة الاحترافية مع الرسوم البيانية)
+// 📊 2. الداش بورد (مع فلتر التاريخ المخصص)
 // =================================================================
 const getDashboardHTML = (totals, records) => {
-    // تجهيز البيانات للجافاسكربت
     const safeRecords = JSON.stringify(records).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     
     return `
@@ -57,68 +56,56 @@ const getDashboardHTML = (totals, records) => {
             body { font-family: 'Tajawal', sans-serif; background-color: #f0f2f5; padding-bottom: 50px; }
             .header-gradient { background: linear-gradient(135deg, #1e3c72, #2a5298); color: white; padding: 2rem 0; border-radius: 0 0 25px 25px; margin-bottom: 2rem; }
             .card { border: none; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); transition: transform 0.2s; }
-            .card:hover { transform: translateY(-5px); }
             .metric-value { font-size: 2rem; font-weight: 800; }
             .text-income { color: #198754; } .text-expense { color: #dc3545; } .text-balance { color: #0d6efd; }
             .chart-container { position: relative; height: 300px; width: 100%; }
+            .date-input { border-radius: 10px; border: none; padding: 10px; }
         </style>
     </head>
     <body>
         <div class="header-gradient text-center">
             <div class="container">
                 <h1>📊 لوحة التحكم المالية</h1>
-                <p class="opacity-75">نظرة شاملة على مصاريفك ودخلك</p>
+                
+                <div class="mt-4 p-3 bg-white bg-opacity-10 rounded-3">
+                    <div class="row g-2 justify-content-center align-items-end">
+                        <div class="col-auto">
+                            <label class="small text-light">من تاريخ</label>
+                            <input type="date" id="startDate" class="form-control date-input">
+                        </div>
+                        <div class="col-auto">
+                            <label class="small text-light">إلى تاريخ</label>
+                            <input type="date" id="endDate" class="form-control date-input">
+                        </div>
+                        <div class="col-auto">
+                            <button onclick="filterCustom()" class="btn btn-warning fw-bold px-4">تطبيق الفلتر 🔍</button>
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <button onclick="filterPreset('all')" class="btn btn-sm btn-light opacity-75">الكل</button>
+                        <button onclick="filterPreset('month')" class="btn btn-sm btn-light opacity-75">هذا الشهر</button>
+                    </div>
+                </div>
             </div>
         </div>
 
         <div class="container">
             <div class="row g-3 mb-4">
-                <div class="col-md-4">
-                    <div class="card p-4 text-center">
-                        <span class="text-muted small">إجمالي الدخل</span>
-                        <div class="metric-value text-income">${totals.income.toLocaleString()} <small style="font-size:1rem">ريال</small></div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card p-4 text-center">
-                        <span class="text-muted small">إجمالي المصروفات</span>
-                        <div class="metric-value text-expense">${totals.expense.toLocaleString()} <small style="font-size:1rem">ريال</small></div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card p-4 text-center">
-                        <span class="text-muted small">الرصيد المتبقي</span>
-                        <div class="metric-value text-balance">${totals.balance.toLocaleString()} <small style="font-size:1rem">ريال</small></div>
-                    </div>
-                </div>
+                <div class="col-md-4"><div class="card p-4 text-center"><span class="text-muted small">الدخل</span><div class="metric-value text-income" id="dispIncome">0</div></div></div>
+                <div class="col-md-4"><div class="card p-4 text-center"><span class="text-muted small">المصروف</span><div class="metric-value text-expense" id="dispExpense">0</div></div></div>
+                <div class="col-md-4"><div class="card p-4 text-center"><span class="text-muted small">الرصيد</span><div class="metric-value text-balance" id="dispBalance">0</div></div></div>
             </div>
 
             <div class="row g-3 mb-4">
-                <div class="col-md-8">
-                    <div class="card p-4">
-                        <h5 class="mb-3">توزيع المصاريف (حسب الفئة)</h5>
-                        <div class="chart-container">
-                            <canvas id="categoryChart"></canvas>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card p-4">
-                        <h5 class="mb-3">نسبة الصرف</h5>
-                        <div class="chart-container">
-                            <canvas id="ratioChart"></canvas>
-                        </div>
-                    </div>
-                </div>
+                <div class="col-md-8"><div class="card p-4"><h5 class="mb-3">توزيع المصاريف</h5><div class="chart-container"><canvas id="categoryChart"></canvas></div></div></div>
+                <div class="col-md-4"><div class="card p-4"><h5 class="mb-3">نسبة الصرف</h5><div class="chart-container"><canvas id="ratioChart"></canvas></div></div></div>
             </div>
 
             <div class="card p-4">
-                <h5 class="mb-3">📝 آخر العمليات المسجلة</h5>
+                <h5 class="mb-3">📝 سجل العمليات</h5>
                 <div class="table-responsive">
                     <table class="table table-hover align-middle">
-                        <thead class="table-light">
-                            <tr><th>التاريخ</th><th>البند</th><th>التصنيف</th><th>المبلغ</th></tr>
-                        </thead>
+                        <thead class="table-light"><tr><th>التاريخ</th><th>البند</th><th>التصنيف</th><th>المبلغ</th></tr></thead>
                         <tbody id="tableBody"></tbody>
                     </table>
                 </div>
@@ -126,67 +113,121 @@ const getDashboardHTML = (totals, records) => {
         </div>
 
         <script>
-            // استلام البيانات
-            const records = JSON.parse('${safeRecords}');
-            const totals = { income: ${totals.income}, expense: ${totals.expense} };
+            const allRecords = JSON.parse('${safeRecords}');
+            let catChart = null; 
+            let ratioChart = null;
 
-            // 1. تعبئة الجدول
-            document.getElementById('tableBody').innerHTML = records.slice(-10).reverse().map(i => {
-                const color = i.type === 'income' ? 'text-success' : 'text-danger';
-                const sign = i.type === 'income' ? '+' : '-';
-                return \`<tr>
-                    <td>\${i.date}</td>
-                    <td class="fw-bold">\${i.item}</td>
-                    <td><span class="badge bg-secondary">\${i.category}</span></td>
-                    <td class="\${color} fw-bold" dir="ltr">\${sign}\${i.amount}</td>
-                </tr>\`;
-            }).join('');
-
-            // 2. تجهيز بيانات الرسم البياني (تجميع المصاريف حسب الفئة)
-            const categories = {};
-            records.forEach(r => {
-                if (r.type === 'expense') {
-                    categories[r.category] = (categories[r.category] || 0) + r.amount;
-                }
+            // تحويل التواريخ لكائنات ليسهل مقارنتها
+            const processedData = allRecords.map(item => {
+                const parts = item.date.split('/'); // نفترض التنسيق DD/MM/YYYY
+                return { 
+                    ...item, 
+                    dateObj: new Date(parts[2], parts[1]-1, parts[0]) 
+                };
             });
 
-            // 3. رسم الشارت الدائري (توزيع المصاريف)
-            new Chart(document.getElementById('categoryChart'), {
-                type: 'bar',
-                data: {
-                    labels: Object.keys(categories),
-                    datasets: [{
-                        label: 'المصروف',
-                        data: Object.values(categories),
-                        backgroundColor: '#3498db',
-                        borderRadius: 5
-                    }]
-                },
-                options: { 
-                    indexAxis: 'y', 
-                    responsive: true, 
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } }
-                }
-            });
+            // فلتر جاهز (هذا الشهر / الكل)
+            function filterPreset(type) {
+                const now = new Date();
+                let filtered = processedData;
 
-            // 4. رسم شارت الدونات (دخل vs صرف)
-            new Chart(document.getElementById('ratioChart'), {
-                type: 'doughnut',
-                data: {
-                    labels: ['المتبقي', 'المصروف'],
-                    datasets: [{
-                        data: [Math.max(0, totals.income - totals.expense), totals.expense],
-                        backgroundColor: ['#2ecc71', '#e74c3c'],
-                        borderWidth: 0
-                    }]
-                },
-                options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false,
-                    cutout: '70%'
+                if (type === 'month') {
+                    filtered = processedData.filter(d => 
+                        d.dateObj.getMonth() === now.getMonth() && 
+                        d.dateObj.getFullYear() === now.getFullYear()
+                    );
                 }
-            });
+                updateUI(filtered);
+            }
+
+            // فلتر التاريخ المخصص
+            function filterCustom() {
+                const startStr = document.getElementById('startDate').value;
+                const endStr = document.getElementById('endDate').value;
+
+                if (!startStr || !endStr) {
+                    alert("الرجاء اختيار تاريخ البداية والنهاية");
+                    return;
+                }
+
+                const start = new Date(startStr);
+                const end = new Date(endStr);
+                end.setHours(23, 59, 59); // لنشمل اليوم الأخير كاملاً
+
+                const filtered = processedData.filter(d => d.dateObj >= start && d.dateObj <= end);
+                updateUI(filtered);
+            }
+
+            // تحديث الواجهة
+            function updateUI(data) {
+                // 1. الحسابات
+                let income = 0;
+                let expense = 0;
+                const cats = {};
+
+                data.forEach(r => {
+                    if (r.type === 'income') income += r.amount;
+                    else {
+                        expense += r.amount;
+                        cats[r.category] = (cats[r.category] || 0) + r.amount;
+                    }
+                });
+
+                // 2. تحديث البطاقات
+                document.getElementById('dispIncome').innerText = income.toLocaleString();
+                document.getElementById('dispExpense').innerText = expense.toLocaleString();
+                document.getElementById('dispBalance').innerText = (income - expense).toLocaleString();
+
+                // 3. تحديث الجدول
+                document.getElementById('tableBody').innerHTML = data.slice().reverse().map(i => {
+                    const color = i.type === 'income' ? 'text-success' : 'text-danger';
+                    const sign = i.type === 'income' ? '+' : '-';
+                    return \`<tr>
+                        <td>\${i.date}</td>
+                        <td class="fw-bold">\${i.item}</td>
+                        <td><span class="badge bg-secondary">\${i.category}</span></td>
+                        <td class="\${color} fw-bold" dir="ltr">\${sign}\${i.amount}</td>
+                    </tr>\`;
+                }).join('');
+
+                // 4. تحديث الشارتات
+                updateCharts(cats, income, expense);
+            }
+
+            function updateCharts(categories, totalIncome, totalExpense) {
+                if (catChart) catChart.destroy();
+                catChart = new Chart(document.getElementById('categoryChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: Object.keys(categories),
+                        datasets: [{
+                            label: 'المصروف',
+                            data: Object.values(categories),
+                            backgroundColor: '#3498db',
+                            borderRadius: 5
+                        }]
+                    },
+                    options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } } }
+                });
+
+                if (ratioChart) ratioChart.destroy();
+                ratioChart = new Chart(document.getElementById('ratioChart'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['المتبقي', 'المصروف'],
+                        datasets: [{
+                            data: [Math.max(0, totalIncome - totalExpense), totalExpense],
+                            backgroundColor: ['#2ecc71', '#e74c3c'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: { maintainAspectRatio: false, cutout: '70%' }
+                });
+            }
+
+            // التشغيل الافتراضي: عرض الكل
+            updateUI(processedData);
+
         </script>
     </body>
     </html>`;
@@ -201,7 +242,7 @@ app.get('/', async (req, res) => {
 app.listen(3000, () => console.log(`Server started`));
 
 // =================================================================
-// 🤖 3. البوت الذكي (كامل المزايا)
+// 🤖 3. البوت الذكي (نفس المنطق السابق)
 // =================================================================
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -218,7 +259,7 @@ bot.on('message', async (msg) => {
     if (ALLOWED_USER_ID && userId !== ALLOWED_USER_ID) return;
     if (!text) return;
 
-    // 🛑 معالجة التأكيد
+    // معالجة التأكيد (نعم/لا/تغيير)
     if (pendingTransaction) {
         if (text === "✅ نعم، اعتمد") {
             try {
@@ -253,7 +294,6 @@ bot.on('message', async (msg) => {
         }
     }
 
-    // 🔗 طلب الرابط
     if (['رابط', 'موقع', 'داش بورد'].some(k => text.includes(k))) {
         bot.sendMessage(chatId, "https://jwad.onrender.com/");
         return;
